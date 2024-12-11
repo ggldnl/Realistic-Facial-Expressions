@@ -20,20 +20,6 @@ import pyvista as pv
 import numpy as np
 import trimesh
 
-
-# TODO check H and W as they should be parametric
-def get_texture_map_from_color(mesh, color, H=224, W=224):
-    num_faces = mesh.faces.shape[0]
-    texture_map = torch.zeros(1, H, W, 3)
-    texture_map[:, :, :] = color
-    return texture_map.permute(0, 3, 1, 2)
-
-def get_face_attributes_from_color(mesh, color):
-    num_faces = mesh.faces.shape[0]
-    face_attributes = torch.zeros(1, num_faces, 3, 3)
-    face_attributes[:, :, :] = color
-    return face_attributes
-
 def read_mesh(obj_path):
     """
     Reads a mesh file and returns its processed data.
