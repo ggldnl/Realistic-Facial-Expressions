@@ -3,7 +3,9 @@ from pathlib import Path
 import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data import random_split
+import os
 
+from src.utils.mesh_utils import read_mesh
 from src.utils.file_utils import download_resource
 from src.utils.file_utils import download_google_drive
 from src.utils.file_utils import extract_zip
@@ -47,9 +49,10 @@ class FacescapeDataset(Dataset):
             dict: A dictionary containing the item data.
         """
 
-        # TODO
         return {
-            'sample_key': self.data[item]
+            'neutral': read_mesh(self.data[item]['neutral']),
+            'expression': read_mesh(self.data[item]['expression']),
+            'description': self.data[item]['description']  # TODO add text encoder
         }
 
 
@@ -71,10 +74,11 @@ class FacescapeDataModule(pl.LightningDataModule):
     """
 
     def __init__(self,
-                 resource_url,      # URL that identifies where to download the data from
-                 download_source,   # The URL can point to google drive, author's website and so on
-                 data_dir,          # Where to put the downloaded data
-                 download='infer',  # Download, skip or check if all the files are there before downloading
+                 resource_url,          # URL that identifies where to download the data from
+                 download_source,       # The URL can point to google drive, author's website and so on
+                 data_dir,              # Where to put the downloaded data
+                 download='infer',      # Download, skip or check if all the files are there before downloading
+                 text_generation=None,  # Lambda used to generate a text description given a file name
                  batch_size=64,
                  custom_collate=None,
                  num_workers=4,
@@ -89,6 +93,15 @@ class FacescapeDataModule(pl.LightningDataModule):
         self.download_source = download_source
         self.data_dir = data_dir
         self.download = download
+
+        if text_generation is None:
+
+            # Lambda to:
+            # 1. replace "_" with " "
+            # 2. remove digits
+            text_generation = lambda s: ''.join(c if not c.isdigit() else '' for c in s.replace('_', ' '))
+
+        self.text_generation = text_generation
 
         self.required_files = [
             Path(self.data_dir, 'facescape')
@@ -139,8 +152,36 @@ class FacescapeDataModule(pl.LightningDataModule):
         else:
             print('Resource already downloaded.')
 
-        # TODO replace with actual logic to read data from files
-        self.data = [[0, 0, 0] for _ in range(100)]
+        self.data = []
+        for user_folder in os.listdir(self.data_dir):
+            user_path = os.path.join(self.data_dir, user_folder)
+
+            if os.path.isdir(user_path):
+                # Find the path to the neutral mesh
+                neutral_mesh = None
+                for file in os.listdir(user_path):
+                    if "neutral" in file:
+                        neutral_mesh = os.path.join(user_path, file)
+                        break
+
+                if not neutral_mesh:
+                    print(f"No neutral mesh found for user {user_folder}. Skipping...")
+                    continue
+
+                # Process all other meshes
+                for file in os.listdir(user_path):
+                    if file.endswith(".ply") and file != os.path.basename(neutral_mesh):
+                        mesh_path = os.path.join(user_path, file)
+                        description = self.text_generation(file)
+                        self.data.append(
+                            {
+                                'neutral': neutral_mesh,
+                                'expression': mesh_path,
+                                'description': description
+                            }
+                        )
+
+        print('Data acquired.')
 
     def setup(self, stage=None):
         """
@@ -213,12 +254,14 @@ class FacescapeDataModule(pl.LightningDataModule):
 if __name__ == '__main__':
 
     import src.config.config as config
+    from src.data.text_generation import DEFAULT_TEXT_GENERATION
 
     datamodule = FacescapeDataModule(
         resource_url=config.RESOURCE_URL,
         download_source=config.DOWNLOAD_SOURCE,
         data_dir=config.DATA_DIR,
-        download=config.DOWNLOAD
+        download=config.DOWNLOAD,
+        text_generation=DEFAULT_TEXT_GENERATION
     )
 
     datamodule.prepare_data()
@@ -226,9 +269,10 @@ if __name__ == '__main__':
 
     # Get a datamodule to iterate
     train_loader = datamodule.train_dataloader()
-    print(f'Number of samples in the dataloader: {len(train_loader)}')
+    print(f'Number of batches in the train dataset: {len(train_loader)}')
 
     for elem in train_loader:
+        print(f'Number of samples in the train dataset: {len(list(elem.values())[0])}')
         for key, value in elem.items():
             print(f'{key}: {value}')
         break

@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent.parent.parent
 
 # Where to check or put the downloaded data
-DATA_DIR = Path(ROOT_DIR, 'datasets')
+DATA_DIR = Path(ROOT_DIR, 'datasets/facescape')
 
 # ---------------------------------- Dataset --------------------------------- #
 
