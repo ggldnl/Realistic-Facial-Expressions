@@ -131,7 +131,7 @@ class FacescapeDataModule(pl.LightningDataModule):
         if self.download == 'infer':
             # Check if all the required paths exist and, if a path points to a directory,
             # check if it contains at least one element
-            if any(not Path.exists(path) or (path.is_dir() and any(path.iterdir())) for path in self.required_files):
+            if any(not path.exists() or (path.is_dir() and not any(path.iterdir())) for path in self.required_files):
                 self.download = 'yes'
 
         if self.download == 'yes':
@@ -154,15 +154,18 @@ class FacescapeDataModule(pl.LightningDataModule):
             print('Resource already downloaded.')
 
         self.data = []
-        for user_folder in os.listdir(self.data_dir):
-            user_path = os.path.join(self.data_dir, user_folder)
+        for user_folder in self.data_dir.iterdir():
+            user_path = Path(self.data_dir, user_folder)
 
-            if os.path.isdir(user_path):
+            if user_path not in self.required_files:
+                continue
+
+            if user_path.is_dir():
                 # Find the path to the neutral mesh
                 neutral_mesh = None
-                for file in os.listdir(user_path):
-                    if "neutral" in file and file.endswith(".ply"):
-                        neutral_mesh = os.path.join(user_path, file)
+                for file in user_path.iterdir():
+                    if "neutral" in file.stem and file.suffix == ".ply":
+                        neutral_mesh = Path(user_path, file)
                         break
 
                 if not neutral_mesh:
@@ -170,14 +173,13 @@ class FacescapeDataModule(pl.LightningDataModule):
                     continue
 
                 # Process all other meshes
-                for file in os.listdir(user_path):
-                    if file.endswith(".ply") and file != os.path.basename(neutral_mesh):
-                        mesh_path = os.path.join(user_path, file)
-                        description = self.text_generation(file)
+                for file in user_path.iterdir():
+                    if file.suffix == ".ply" and file != neutral_mesh:
+                        description = self.text_generation(file.stem)
                         self.data.append(
                             {
                                 'neutral': neutral_mesh,
-                                'expression': mesh_path,
+                                'expression': file,
                                 'description': description
                             }
                         )

@@ -279,4 +279,3 @@ dependencies:
       - setuptools==75.6.0
       - sympy==1.13.1
       - torch==2.5.1
-prefix: /home/daniel/mambaforge/envs/realistic_facial_expressions
