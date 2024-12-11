@@ -103,8 +103,9 @@ class FacescapeDataModule(pl.LightningDataModule):
 
         self.text_generation = text_generation
 
+        # TODO for now, only one user is taken into account
         self.required_files = [
-            Path(self.data_dir, 'facescape')
+            Path(self.data_dir, f'{i}') for i in [200]
         ]
 
         # Other stuff
