@@ -3,7 +3,7 @@ from pathlib import Path
 import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data import random_split
-import os
+import torch
 
 from src.utils.mesh_utils import read_mesh
 from src.utils.file_utils import download_resource
@@ -49,10 +49,18 @@ class FacescapeDataset(Dataset):
             dict: A dictionary containing the item data.
         """
 
+        neutral_mesh = read_mesh(self.data[item]['neutral'])
+        expression_mesh = read_mesh(self.data[item]['expression'])
+
+        # neutral_mesh and expression_mesh have the same keys. Add a prefix to all the keys in both
+        # dictionaries to distinguish them
+        neutral_mesh = {f"neutral_{k}": v for k, v in neutral_mesh.items()}
+        expression_mesh = {f"expression_{k}": v for k, v in expression_mesh.items()}
+
         return {
-            'neutral': read_mesh(self.data[item]['neutral']),
-            'expression': read_mesh(self.data[item]['expression']),
-            'description': self.data[item]['description']  # TODO add text encoder
+            **neutral_mesh,
+            **expression_mesh,
+            'description': self.data[item]['description']
         }
 
 
@@ -80,7 +88,6 @@ class FacescapeDataModule(pl.LightningDataModule):
                  download='infer',      # Download, skip or check if all the files are there before downloading
                  text_generation=None,  # Lambda used to generate a text description given a file name
                  batch_size=64,
-                 custom_collate=None,
                  num_workers=4,
                  train_split=0.8,
                  val_split=0.1,
@@ -105,12 +112,28 @@ class FacescapeDataModule(pl.LightningDataModule):
 
         # TODO for now, only one user is taken into account
         self.required_files = [
-            Path(self.data_dir, f'{i}') for i in [200]
+            Path(self.data_dir, f'{i}') for i in [-2]
         ]
+
+        def custom_collate(batch):
+
+            if isinstance(batch[0], torch.Tensor):
+                # If the first element is a tensor, stack all tensors
+                return torch.stack(batch, dim=0)
+            elif isinstance(batch[0], str):
+                # If the first element is a string, return a list of strings
+                return batch
+            elif isinstance(batch[0], dict):
+                # If the first element is a dictionary, recurse for each key
+                return {key: custom_collate([item[key] for item in batch]) for key in batch[0]}
+            else:
+                # For other types (e.g., lists, tuples), return as-is
+                return batch
+
+        self.custom_collate = custom_collate
 
         # Other stuff
         self.batch_size = batch_size
-        self.custom_collate = custom_collate
         self.num_workers = num_workers
         self.train_split = train_split
         self.val_split = val_split
