@@ -160,7 +160,7 @@ class FacescapeDataModule(pl.LightningDataModule):
                 # Find the path to the neutral mesh
                 neutral_mesh = None
                 for file in os.listdir(user_path):
-                    if "neutral" in file:
+                    if "neutral" in file and file.endswith(".ply"):
                         neutral_mesh = os.path.join(user_path, file)
                         break
 
