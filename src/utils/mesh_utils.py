@@ -29,6 +29,7 @@ def read_mesh(obj_path):
         obj_path = Path(obj_path)
 
     # Load the mesh based on file extension
+    """
     loader = 'kaolin'
     if obj_path.suffix == ".obj":
         mesh = kal.io.obj.import_mesh(obj_path, with_normals=True)
@@ -40,6 +41,9 @@ def read_mesh(obj_path):
         loader = 'trimesh'
     else:
         raise ValueError(f"Unsupported file extension for {obj_path}.")
+    """
+    loader = 'trimesh'
+    mesh = trimesh.load_mesh(obj_path, process=True)
 
     if loader == 'trimesh':
 
@@ -113,7 +117,7 @@ if __name__ == "__main__":
 
     import src.config.config as config
 
-    mesh_path = Path(config.DATA_DIR, '100/1_neutral.ply')
+    mesh_path = Path(config.DATA_DIR, '100/models_reg/1_neutral.obj')
 
     color = torch.tensor([0.0, 0.0, 1.0])
     mesh_data = read_mesh(mesh_path)
