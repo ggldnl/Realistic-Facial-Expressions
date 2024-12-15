@@ -112,7 +112,7 @@ class FacescapeDataModule(pl.LightningDataModule):
 
         # TODO for now, only one user is taken into account
         self.required_files = [
-            Path(self.data_dir, f'{i}') for i in [-2]
+            Path(self.data_dir, f'{i}', 'models_reg') for i in range(100)
         ]
 
         def custom_collate(batch):
@@ -178,7 +178,7 @@ class FacescapeDataModule(pl.LightningDataModule):
 
         self.data = []
         for user_folder in self.data_dir.iterdir():
-            user_path = Path(self.data_dir, user_folder)
+            user_path = Path(self.data_dir, user_folder, 'models_reg')
 
             if user_path not in self.required_files:
                 continue
@@ -187,7 +187,7 @@ class FacescapeDataModule(pl.LightningDataModule):
                 # Find the path to the neutral mesh
                 neutral_mesh = None
                 for file in user_path.iterdir():
-                    if "neutral" in file.stem and file.suffix == ".ply":
+                    if "neutral" in file.stem and file.suffix == ".obj":
                         neutral_mesh = Path(user_path, file)
                         break
 
@@ -197,7 +197,7 @@ class FacescapeDataModule(pl.LightningDataModule):
 
                 # Process all other meshes
                 for file in user_path.iterdir():
-                    if file.suffix == ".ply" and file != neutral_mesh:
+                    if file.suffix == ".obj" and file != neutral_mesh:
                         description = self.text_generation(file.stem)
                         self.data.append(
                             {
