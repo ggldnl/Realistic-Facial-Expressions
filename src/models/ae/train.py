@@ -17,7 +17,8 @@ if __name__ == '__main__':
         download_source=config.DOWNLOAD_SOURCE,
         data_dir=config.DATA_DIR,
         download=config.DOWNLOAD,
-        text_generation=DEFAULT_TEXT_GENERATION
+        text_generation=DEFAULT_TEXT_GENERATION,
+        batch_size=config.BATCH_SIZE
     )
 
     # Log to tensorboard
