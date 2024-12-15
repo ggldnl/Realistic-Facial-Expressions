@@ -1,25 +1,26 @@
-import clip
-import pytorch_lightning as pl
+from typing import Optional
+
 import torch
+import pytorch_lightning as pl
 import torchvision.transforms as transforms
 from PIL import Image
-
+from transformers import CLIPProcessor, CLIPModel
 
 class CLIP(pl.LightningModule):
-    """Wrapper for CLIP model and related transforms"""
+    """Wrapper for CLIP model and related transforms using Hugging Face implementation"""
 
     def __init__(self,
-                 model_name: str = "ViT-B/32",
-                 res: int = 224,
-                 device: str = "cuda"):
+                 model_name: str = "openai/clip-vit-base-patch32",
+                 res: int = 224):
         super().__init__()
-        self.device = device
         self.res = res
+        self.save_hyperparameters()
 
-        # Load CLIP model
-        self.model, _ = clip.load(model_name, device=device)
+        # Load CLIP model and processor from Hugging Face
+        self.model = CLIPModel.from_pretrained(model_name)
+        self.processor = CLIPProcessor.from_pretrained(model_name)
 
-        # CLIP normalization
+        # CLIP normalization values from original implementation
         self.normalizer = transforms.Normalize(
             (0.48145466, 0.4578275, 0.40821073),
             (0.26862954, 0.26130258, 0.27577711)
@@ -39,21 +40,29 @@ class CLIP(pl.LightningModule):
 
     def encode_prompt(self, prompt: str) -> torch.Tensor:
         """Encode text prompt using CLIP"""
-        token = clip.tokenize([prompt]).to(self.device)
-        return self.model.encode_text(token)
+        inputs = self.processor(text=[prompt], return_tensors="pt", padding=True)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        text_features = self.model.get_text_features(**inputs)
+        return text_features
 
     def encode_image(self, image_path: str) -> torch.Tensor:
         """Encode reference image using CLIP"""
         img = Image.open(image_path)
-        img = self.transform(img).unsqueeze(0).to(self.device)
-        return self.model.encode_image(img)
+        inputs = self.processor(images=img, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        image_features = self.model.get_image_features(**inputs)
+        return image_features
 
     def encode_renders(self, renders: torch.Tensor) -> torch.Tensor:
         """Encode rendered views using CLIP"""
         processed = self.transform(renders)
-        return self.model.encode_image(processed)
+        inputs = {"pixel_values": processed.to(self.device)}
+        image_features = self.model.get_image_features(**inputs)
+        return image_features
 
     def encode_augmented_renders(self, renders: torch.Tensor) -> torch.Tensor:
         """Encode rendered views with augmentation using CLIP"""
         processed = self.augment_transform(renders)
-        return self.model.encode_image(processed)
+        inputs = {"pixel_values": processed.to(self.device)}
+        image_features = self.model.get_image_features(**inputs)
+        return image_features
