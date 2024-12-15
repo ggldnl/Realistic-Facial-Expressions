@@ -1,4 +1,5 @@
 import numpy as np
+import pyrender
 import pyvista
 
 from src.utils.decorators import deprecated

@@ -1,0 +1,300 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import pytorch_lightning as pl
+import numpy as np
+from typing import Tuple, Optional, Dict, Any
+
+from src.models.mlp.clip import CLIP
+from src.utils.renderer import Renderer
+
+
+class FourierFeatureTransform(pl.LightningModule):
+    """
+    Gaussian Fourier feature mapping.
+    "Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains"
+    https://arxiv.org/abs/2006.10739
+    """
+
+    def __init__(self,
+                 num_input_channels: int,
+                 mapping_size: int = 256,
+                 scale: float = 10,
+                 exclude: int = 0):
+        super().__init__()
+        self.num_input_channels = num_input_channels
+        self.mapping_size = mapping_size
+        self.exclude = exclude
+
+        # Initialize and sort B matrix by L2 norm
+        B = torch.randn((num_input_channels, mapping_size)) * scale
+        B_sort = sorted(B, key=lambda x: torch.norm(x, p=2))
+        self.B = nn.Parameter(torch.stack(B_sort), requires_grad=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batches, channels = x.shape
+        assert channels == self.num_input_channels, \
+            f"Expected {self.num_input_channels} channels, got {channels}"
+
+        res = x @ self.B.to(x.device)
+        res = 2 * np.pi * res
+        return torch.cat([x, torch.sin(res), torch.cos(res)], dim=1)
+
+
+class ProgressiveEncoding(pl.LightningModule):
+    """Progressive encoding module for feature learning"""
+
+    def __init__(self,
+                 mapping_size: int,
+                 T: int,
+                 d: int = 3,
+                 apply: bool = True):
+        super().__init__()
+        self.t = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.mapping_size = mapping_size
+        self.T = T
+        self.d = d
+        self.tau = 2 * self.mapping_size / self.T
+        self.indices = nn.Parameter(torch.arange(self.mapping_size), requires_grad=False)
+        self.apply = apply
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if not self.apply:
+            alpha = torch.ones(2 * self.mapping_size + self.d, device=x.device)
+        else:
+            alpha = ((self.t - self.tau * self.indices) / self.tau).clamp(0, 1).repeat(2)
+            alpha = torch.cat([torch.ones(self.d, device=x.device), alpha], dim=0)
+
+        self.t += 1
+        return x * alpha
+
+
+class NeuralStyleField(pl.LightningModule):
+    """Neural Style Field implementation using PyTorch Lightning"""
+
+    def __init__(
+            self,
+            sigma: float = 10.0,
+            depth: int= 4,
+            width: int = 256,
+            colordepth: int = 2,
+            normdepth: int = 2,
+            normratio: float = 0.1,
+            clamp: Optional[str] = 'tanh',
+            normclamp: Optional[str] = 'tanh',
+            n_iter: int = 6000,
+            input_dim: int = 3, #todo check
+            progressive_encoding: bool = True,
+            exclude: int = 0,
+            learning_rate: float = 1e-3,#todo check
+            weight_decay: float = 0.0,
+            lr_decay: float = 1.0,
+            decay_step: int = 100
+    ):
+        super().__init__()
+
+        # Store configuration
+        self.sigma = sigma
+        self.depth = depth
+        self.width = width
+        self.colordepth = colordepth
+        self.normdepth = normdepth
+        self.normratio = normratio
+        self.clamp = clamp
+        self.normclamp = normclamp
+        self.n_iter = n_iter
+        self.input_dim = input_dim
+        self.progressive_encoding = progressive_encoding
+        self.exclude = exclude
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.lr_decay = lr_decay
+        self.decay_step = decay_step
+
+        self.pe = ProgressiveEncoding(
+            mapping_size=width,
+            T=n_iter,
+            d=input_dim
+        )
+
+        # Build base network
+        self.base = nn.ModuleList([
+            FourierFeatureTransform(input_dim, width, sigma, exclude),
+            self.pe if progressive_encoding else nn.Identity(),
+            nn.Linear(width * 2 + input_dim, width),
+            nn.ReLU()
+        ])
+
+        # Add depth layers
+        for _ in range(depth):
+            self.base.extend([
+                nn.Linear(width, width),
+                nn.ReLU()
+            ])
+
+        # Normal branch
+        self.mlp_normal = self._build_branch(width, normdepth, output_dim=1)
+
+        self.save_hyperparameters()
+
+    def _build_branch(self, width: int, depth: int, output_dim: int) -> nn.ModuleList:
+        """Helper method to build network branches"""
+        layers = []
+        for _ in range(depth):
+            layers.extend([
+                nn.Linear(width, width),
+                nn.ReLU()
+            ])
+        layers.append(nn.Linear(width, output_dim))
+        return nn.ModuleList(layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Base network
+        for layer in self.base:
+            x = layer(x)
+
+        displ = x
+        for layer in self.mlp_normal:
+            displ = layer(displ)
+
+        if self.normclamp == "tanh":
+            displ = F.tanh(displ) * self.normratio
+        elif self.normclamp == "clamp":
+            displ = torch.clamp(displ, -self.normratio, self.normratio)
+
+        return displ
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(
+            self.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay
+        )
+
+        if self.lr_decay < 1 and self.decay_step > 0:
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=self.decay_step,
+                gamma=self.lr_decay
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": scheduler,
+                "monitor": "train_loss"
+            }
+
+        return optimizer
+
+    def training_step(self, batch, batch_idx):
+        x = batch
+        displ = self(x)
+        loss = self._calculate_loss(displ)
+        self.log('train_loss', loss)
+        return loss
+
+    def _calculate_loss(self, displacement):
+        pass
+
+
+class NeuralStyleTransfer(pl.LightningModule):
+    """Lightning module for neural style transfer training"""
+
+    def __init__(self,
+                 prompt: str,
+                 clip_model: str = "ViT-B/32",
+                 reference_image: Optional[str] = None,
+                 sigma: float = 10.0,
+                 depth: int = 4,
+                 width: int = 256,
+                 colordepth: int = 2,
+                 normdepth: int = 2,
+                 normratio: float = 0.1,
+                 n_augs: int = 4,
+                 learning_rate: float = 1e-3,
+                 lr_decay: float = 0.9,
+                 decay_step: int = 1000,
+                 res: int = 224):
+        super().__init__()
+        self.save_hyperparameters()
+
+        # Initialize CLIP
+        self.clip = CLIP(model_name=clip_model, res=res)
+
+        # Set up renderer
+        self.renderer = Renderer()
+
+        # Get target features
+        if prompt:
+            self.target_features = self.clip.encode_prompt(prompt)
+        elif reference_image:
+            self.target_features = self.clip.encode_image(reference_image)
+        else:
+            raise ValueError("Either prompt or reference_image must be provided")
+
+        # Initialize neural style field
+        self.style_field = NeuralStyleField(
+            sigma=sigma,
+            depth=depth,
+            width=width,
+            colordepth=colordepth,
+            normdepth=normdepth,
+            normratio=normratio,
+            learning_rate=learning_rate
+        )
+
+        # Store settings
+        self.n_augs = n_augs
+        self.learning_rate = learning_rate
+        self.lr_decay = lr_decay
+        self.decay_step = decay_step
+
+    def forward(self, vertices):
+        return self.style_field(vertices)
+
+    def training_step(self, batch, batch_idx):
+        vertices = batch['vertices']
+        faces = batch['faces']
+
+        # Get style field output
+        displacements = self(vertices)
+
+        # Apply displacements
+        deformed_vertices = vertices + displacements
+
+        # Render views
+        rendered_images = self.renderer.render_front_views(
+            deformed_vertices,
+            num_views=4  # Could be made configurable
+        )
+
+        # Calculate CLIP loss with augmentations
+        loss = 0
+        for _ in range(self.n_augs):
+            encoded_renders = self.clip.encode_augmented_renders(rendered_images)
+            loss -= torch.mean(torch.cosine_similarity(
+                encoded_renders,
+                self.target_features
+            ))
+
+        self.log('train_loss', loss)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(
+            self.parameters(),
+            lr=self.learning_rate
+        )
+
+        if self.lr_decay < 1 and self.decay_step > 0:
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=self.decay_step,
+                gamma=self.lr_decay
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": scheduler,
+                "monitor": "train_loss"
+            }
+
+        return optimizer
