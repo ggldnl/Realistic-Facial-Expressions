@@ -12,7 +12,7 @@ def deprecated(func):
         return func(*args, **kwargs)
     return wrapper
 
-def deprecated(func):
+def fixme(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         warnings.warn(
