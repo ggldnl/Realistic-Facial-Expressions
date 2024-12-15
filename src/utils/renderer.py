@@ -1,5 +1,6 @@
 import numpy as np
 import pyvista
+import trimesh
 
 from src.utils.decorators import fixme
 
@@ -93,6 +94,49 @@ class Renderer:
 
         return transformation_matrix
 
+    def multiple_render(self,
+                        model_in,
+                        num_views=8,
+                        radius=600,
+                        elevation=0,
+                        scale=1.0,
+                        rend_size=(1024, 768)
+                        ):
+        """
+        Renders multiple views of the mesh by rotating the camera around the object.
+
+        Args:
+            model_in: Path to the input 3D model file
+            num_views (int): Number of views to render (default: 8)
+            radius (float): Distance of camera from the object (default: 600)
+            elevation (float): Height of camera above the object (default: 0)
+            scale (float): Scale factor for the mesh (default: 1.0)
+            rend_size (tuple): Resolution of rendered images (width, height) (default: (1024, 768))
+
+        Returns:
+            list: List of numpy arrays containing the rendered images
+        """
+        rendered_images = []
+        angle_step = 360 / num_views
+
+        for i in range(num_views):
+            angle = i * angle_step
+
+            cam_pos, cam_view, up_vector = self.cylindrical_to_pyvista(radius, elevation, angle)
+
+            rendered_img = self.render(
+                model_in=model_in,
+                cam_pos=cam_pos,
+                cam_view=cam_view,
+                up_vector=up_vector,
+                scale=scale,
+                rend_size=rend_size
+            )
+
+            rendered_images.append(rendered_img)
+
+        return rendered_images
+
     def render(self,
                model_in,
                Rt=None,
@@ -101,7 +145,7 @@ class Renderer:
                up_vector=None,
                scale=1.0,
                rend_size=(512, 512)
-    ):
+               ):
         """
         Renders the mesh using PyVista. PyVista uses a camera model where the camera position, direction,
         and up vector are specified directly, and it handles the intrinsic details internally, so the
@@ -155,12 +199,9 @@ class Renderer:
 
 
 if __name__ == "__main__":
-
-    import matplotlib.pyplot as plt
     from pathlib import Path
-    import trimesh
-
-    import src.config.config as config
+    import matplotlib.pyplot as plt
+    from src.config import config
 
     # Instantiate the renderer
     renderer = Renderer()
