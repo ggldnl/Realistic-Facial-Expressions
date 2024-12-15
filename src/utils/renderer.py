@@ -100,7 +100,8 @@ class Renderer:
                         radius=600,
                         elevation=0,
                         scale=1.0,
-                        rend_size=(1024, 768)
+                        rend_size=(1024, 768),
+                        from_path=True
                         ):
         """
         Renders multiple views of the mesh by rotating the camera around the object.
@@ -112,6 +113,7 @@ class Renderer:
             elevation (float): Height of camera above the object (default: 0)
             scale (float): Scale factor for the mesh (default: 1.0)
             rend_size (tuple): Resolution of rendered images (width, height) (default: (1024, 768))
+            from_path (bool): Whether to load the mesh from a path (default: True)
 
         Returns:
             list: List of numpy arrays containing the rendered images
@@ -130,7 +132,8 @@ class Renderer:
                 cam_view=cam_view,
                 up_vector=up_vector,
                 scale=scale,
-                rend_size=rend_size
+                rend_size=rend_size,
+                from_path=from_path
             )
 
             rendered_images.append(rendered_img)
@@ -144,7 +147,8 @@ class Renderer:
                cam_view=None,
                up_vector=None,
                scale=1.0,
-               rend_size=(512, 512)
+               rend_size=(512, 512),
+               from_path=True
                ):
         """
         Renders the mesh using PyVista. PyVista uses a camera model where the camera position, direction,
@@ -156,8 +160,11 @@ class Renderer:
         if Rt is not None and (cam_pos is not None or cam_view is not None or up_vector is not None):
             raise ValueError('Multiple ways to compute camera position and orientation provided.')
 
-        # Load the mesh using trimesh
-        mesh = self._load_mesh(model_in)
+        if from_path:
+            # Load the mesh using trimesh
+            mesh = self._load_mesh(model_in)
+        else:
+            mesh = model_in
 
         # Each face must start with the number of vertices (3 for triangles)
         faces = np.hstack([np.full((mesh.faces.shape[0], 1), 3), mesh.faces])  # Prefix faces with 3 (triangle)
