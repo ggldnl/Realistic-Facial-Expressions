@@ -72,7 +72,7 @@ class TextEncoder(pl.LightningModule):
 
 class MeshAutoEncoder(pl.LightningModule):
 
-    def __init__(self, layers_in, latent_size, layers_out=None, text_embed_size=None):
+    def __init__(self, layers_in, latent_size, layers_out=None, text_embed_size=None, lr=1e-3):
 
         super().__init__()
 
@@ -81,10 +81,11 @@ class MeshAutoEncoder(pl.LightningModule):
         self.layers_out = layers_out if layers_out is not None \
             else [layers_in[i] for i in range(len(layers_in) - 1, -1, -1)]  # else mirror layers_in
         self.text_embed_size = text_embed_size if text_embed_size is not None else latent_size
+        self.lr = lr
 
         self.projection_in = Projection(self.layers_in + [self.latent_size])
-        self.projection_out = Projection([self.latent_size + self.text_embed_size] + self.layers_out)
         self.text_encoder = TextEncoder(self.text_embed_size)
+        self.projection_out = Projection([self.latent_size + self.text_embed_size] + self.layers_out)
 
         # TODO choose a better loss
         self.loss_fn = mse_loss
@@ -94,15 +95,17 @@ class MeshAutoEncoder(pl.LightningModule):
         neutral_vertices = batch['neutral_vertices']
         target = batch['expression_vertices']
         descriptions = batch['description']
+        batch_size = neutral_vertices.shape[0]
 
-
-        features = neutral_vertices  # TODO this should be fixed using normals or something
-
-
+        # TODO this should be fixed using normals or something
+        features = neutral_vertices.view(batch_size, -1)
         projection_in_result = self.projection_in(features)
+
         text_embed = self.text_encoder(descriptions)
-        concat_vec = torch.concat([projection_in_result, text_embed])
-        displacements = self.projection_out(concat_vec)
+        concat_vec = torch.hstack([projection_in_result, text_embed])
+
+        projection_out_result = self.projection_out(concat_vec)
+        displacements = projection_out_result.view(batch_size, -1, 3)
         pred = neutral_vertices + displacements  # Meshes with artificial expression
 
         loss = self.loss_fn(pred, target)
@@ -115,7 +118,7 @@ class MeshAutoEncoder(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss = self.common_step(batch)
-        self.log("validation_loss", loss)
+        self.log("val_loss", loss)
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -126,11 +129,13 @@ class MeshAutoEncoder(pl.LightningModule):
     def configure_optimizers(self):
 
         trainable_parameters = list(self.projection_in.parameters()) + \
-            list(self.projection_out.parameters())
+            list(self.projection_out.parameters()) + \
+            list(self.text_encoder.projection.parameters())
 
         optimizer = torch.optim.AdamW(trainable_parameters, lr=self.lr)
 
         return optimizer
+
 
 if __name__ == '__main__':
 

@@ -18,18 +18,24 @@ RESOURCE_URL = r"https://drive.google.com/drive/folders/14aQeK7S35FP5Z9EkJ6e6TCZ
 DOWNLOAD_SOURCE = 'drive'
 
 # Download, skip or check if all the files are there before downloading
-DOWNLOAD = 'no'
+DOWNLOAD = 'infer'
 
 # Splitting percentage
 TRAIN_SPLIT = 0.8
 TEST_SPLIT = 0.1
+# 0.1 percent will be devoted to the validation set
 
 # ----------------------------------- Model ---------------------------------- #
-LAYERS_IN = [26404, 10000, 5000, 2500]  # 26404 being the size of the meshes in our dataset
-LATENT_SIZE = 512
-TEXT_EMBED_SIZE = 512
+# LAYERS_IN = [26404, 10000, 5000, 2500]  # 26404 being the size of the meshes in our dataset
+# LATENT_SIZE = 512
+# TEXT_EMBED_SIZE = 512
+
+LAYERS_IN = [24, 10]  # 26404 being the size of the meshes in our dataset
+LATENT_SIZE = 3
+TEXT_EMBED_SIZE = 3
 
 # --------------------------------- Training --------------------------------- #
 
+BATCH_SIZE = 16
 EPOCHS = 50
 PATIENCE = 20
