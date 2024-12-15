@@ -6,6 +6,7 @@ import numpy as np
 from typing import Tuple, Optional, Dict, Any
 
 from src.models.mlp.clip import CLIP
+from src.utils.mesh_utils import create_trimesh_from_tensors
 from src.utils.renderer import Renderer
 
 
@@ -32,13 +33,23 @@ class FourierFeatureTransform(pl.LightningModule):
         self.B = nn.Parameter(torch.stack(B_sort), requires_grad=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        batches, channels = x.shape
-        assert channels == self.num_input_channels, \
-            f"Expected {self.num_input_channels} channels, got {channels}"
+        # Reshape input to 2D if needed: (batch_size, ..., channels) -> (batch_size * ..., channels)
+        original_shape = x.shape
+        if len(original_shape) > 2:
+            x = x.reshape(-1, original_shape[-1])
+
+        assert x.shape[-1] == self.num_input_channels, \
+            f"Expected {self.num_input_channels} channels, got {x.shape[-1]}"
 
         res = x @ self.B.to(x.device)
         res = 2 * np.pi * res
-        return torch.cat([x, torch.sin(res), torch.cos(res)], dim=1)
+        output = torch.cat([x, torch.sin(res), torch.cos(res)], dim=-1)
+
+        # Reshape back to original dimensions
+        if len(original_shape) > 2:
+            output = output.reshape(*original_shape[:-1], -1)
+
+        return output
 
 
 class ProgressiveEncoding(pl.LightningModule):
@@ -66,7 +77,7 @@ class ProgressiveEncoding(pl.LightningModule):
             alpha = torch.cat([torch.ones(self.d, device=x.device), alpha], dim=0)
 
         self.t += 1
-        return x * alpha
+        return x * alpha.view(1, -1)  # Add dimension for broadcasting
 
 
 class NeuralStyleField(pl.LightningModule):
@@ -75,7 +86,7 @@ class NeuralStyleField(pl.LightningModule):
     def __init__(
             self,
             sigma: float = 10.0,
-            depth: int= 4,
+            depth: int = 4,
             width: int = 256,
             colordepth: int = 2,
             normdepth: int = 2,
@@ -92,8 +103,6 @@ class NeuralStyleField(pl.LightningModule):
             decay_step: int = 100
     ):
         super().__init__()
-
-        # Store configuration
         self.sigma = sigma
         self.depth = depth
         self.width = width
@@ -164,44 +173,13 @@ class NeuralStyleField(pl.LightningModule):
 
         return displ
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
-            self.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay
-        )
-
-        if self.lr_decay < 1 and self.decay_step > 0:
-            scheduler = torch.optim.lr_scheduler.StepLR(
-                optimizer,
-                step_size=self.decay_step,
-                gamma=self.lr_decay
-            )
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": scheduler,
-                "monitor": "train_loss"
-            }
-
-        return optimizer
-
-    def training_step(self, batch, batch_idx):
-        x = batch
-        displ = self(x)
-        loss = self._calculate_loss(displ)
-        self.log('train_loss', loss)
-        return loss
-
-    def _calculate_loss(self, displacement):
-        pass
-
 
 class NeuralStyleTransfer(pl.LightningModule):
     """Lightning module for neural style transfer training"""
 
     def __init__(self,
-                 prompt: str,
-                 clip_model: str = "ViT-B/32",
+                 clip_model: str = "openai/clip-vit-base-patch32",
+                 prompt: Optional[str] = None,
                  reference_image: Optional[str] = None,
                  sigma: float = 10.0,
                  depth: int = 4,
@@ -209,7 +187,6 @@ class NeuralStyleTransfer(pl.LightningModule):
                  colordepth: int = 2,
                  normdepth: int = 2,
                  normratio: float = 0.1,
-                 n_augs: int = 4,
                  learning_rate: float = 1e-3,
                  lr_decay: float = 0.9,
                  decay_step: int = 1000,
@@ -229,7 +206,7 @@ class NeuralStyleTransfer(pl.LightningModule):
         elif reference_image:
             self.target_features = self.clip.encode_image(reference_image)
         else:
-            raise ValueError("Either prompt or reference_image must be provided")
+            print('No prompt or reference image, training...')
 
         # Initialize neural style field
         self.style_field = NeuralStyleField(
@@ -243,7 +220,6 @@ class NeuralStyleTransfer(pl.LightningModule):
         )
 
         # Store settings
-        self.n_augs = n_augs
         self.learning_rate = learning_rate
         self.lr_decay = lr_decay
         self.decay_step = decay_step
@@ -252,8 +228,9 @@ class NeuralStyleTransfer(pl.LightningModule):
         return self.style_field(vertices)
 
     def training_step(self, batch, batch_idx):
-        vertices = batch['vertices']
-        faces = batch['faces']
+        vertices = batch['neutral_vertices']
+        target_vertices = batch['expression_vertices']
+        batch_size = vertices.shape[0]
 
         # Get style field output
         displacements = self(vertices)
@@ -261,19 +238,46 @@ class NeuralStyleTransfer(pl.LightningModule):
         # Apply displacements
         deformed_vertices = vertices + displacements
 
-        # Render views
-        rendered_images = self.renderer.render_front_views(
-            deformed_vertices,
-            num_views=4  # Could be made configurable
-        )
+        computed_rendered_images = []
+        target_rendered_images = []
+
+        for idx in range(batch_size):
+            computed_model = create_trimesh_from_tensors(vertices=deformed_vertices[idx],
+                                                         faces=batch['expression_faces'][idx])
+
+            target_model = create_trimesh_from_tensors(vertices=target_vertices[idx],
+                                                       faces=batch['expression_faces'][idx])
+
+
+
+            # Render views
+            computed_rendered_images.append(self.renderer.multiple_render(
+                model_in=computed_model,
+                num_views=8,
+                radius=600,
+                elevation=0,
+                scale=1.0,
+                rend_size=(1024, 1024),
+                from_path=False
+            ))
+            target_rendered_images.append(self.renderer.multiple_render(
+                model_in=target_vertices,
+                num_views=8,
+                radius=600,
+                elevation=0,
+                scale=1.0,
+                rend_size=(1024, 1024),
+                from_path=False
+            ))
 
         # Calculate CLIP loss with augmentations
         loss = 0
-        for _ in range(self.n_augs):
-            encoded_renders = self.clip.encode_augmented_renders(rendered_images)
+        for idx, rendered_image in enumerate(computed_rendered_images):
+            encoded_renders = self.clip.encode_augmented_renders(rendered_image)
             loss -= torch.mean(torch.cosine_similarity(
-                encoded_renders,
-                self.target_features
+                rendered_image,
+                target_rendered_images[idx]
+                #self.target_features.expand(batch_size, -1)
             ))
 
         self.log('train_loss', loss)
