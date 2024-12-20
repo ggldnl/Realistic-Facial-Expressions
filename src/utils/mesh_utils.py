@@ -112,6 +112,37 @@ def visualize_mesh(mesh_data, color=(0.0, 0.0, 1.0), show_normals=False):
     plotter.show()
 
 
+def create_trimesh_from_tensors(vertices, faces, vertex_normals=None):
+    """
+    Creates a trimesh object from tensor data.
+
+    Args:
+        vertices (torch.Tensor): Vertex positions tensor of shape (N, 3)
+        faces (torch.Tensor): Face indices tensor of shape (M, 3)
+        vertex_normals (torch.Tensor, optional): Vertex normals tensor of shape (N, 3)
+
+    Returns:
+        trimesh.Trimesh: The created mesh object
+    """
+    # Convert tensors to numpy arrays
+    vertices_np = vertices.detach().cpu().numpy()
+    faces_np = faces.detach().cpu().numpy()
+
+    # Create the mesh
+    mesh = trimesh.Trimesh(
+        vertices=vertices_np,
+        faces=faces_np,
+        process=False
+    )
+
+    # If vertex normals are provided, set them
+    if vertex_normals is not None:
+        vertex_normals_np = vertex_normals.detach().cpu().numpy()
+        mesh.vertex_normals = vertex_normals_np
+
+    return mesh
+
+
 # Test the visualization
 if __name__ == "__main__":
 
