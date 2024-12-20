@@ -1,8 +1,10 @@
-import numpy as np
 from pathlib import Path
 import pytorch_lightning as pl
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torch.utils.data import random_split
+from torch_geometric.data import Data
+from torch_geometric.data import Batch
+from torch_geometric.loader import DataLoader
 import torch
 
 from src.utils.mesh_utils import read_mesh
@@ -10,10 +12,6 @@ from src.utils.file_utils import download_resource
 from src.utils.file_utils import download_google_drive
 from src.utils.file_utils import extract_zip
 from src.utils.file_utils import remove
-
-
-seed = 127001
-rng = np.random.default_rng(seed)
 
 
 class FacescapeDataset(Dataset):
@@ -38,6 +36,18 @@ class FacescapeDataset(Dataset):
         """
         return len(self.data)
 
+    @staticmethod
+    def faces_to_edges(faces):
+        """
+        Convert faces (triangles) to edge list
+        """
+        edges = set()
+        for face in faces:
+            edges.add(tuple(sorted([face[0], face[1]])))
+            edges.add(tuple(sorted([face[1], face[2]])))
+            edges.add(tuple(sorted([face[2], face[0]])))
+        return list(edges)
+
     def __getitem__(self, item):
         """
         Retrieves an item from the dataset.
@@ -52,14 +62,29 @@ class FacescapeDataset(Dataset):
         neutral_mesh = read_mesh(self.data[item]['neutral'])
         expression_mesh = read_mesh(self.data[item]['expression'])
 
-        # neutral_mesh and expression_mesh have the same keys. Add a prefix to all the keys in both
-        # dictionaries to distinguish them
-        neutral_mesh = {f"neutral_{k}": v for k, v in neutral_mesh.items()}
-        expression_mesh = {f"expression_{k}": v for k, v in expression_mesh.items()}
+        neutral_vertices = neutral_mesh['vertices']
+        neutral_faces = neutral_mesh['faces']
+        expression_vertices = expression_mesh['vertices']
+        expression_faces = expression_mesh['faces']
+
+        # Convert the mesh to graph: vertices as nodes, edges from faces
+        neutral_edges = self.faces_to_edges(neutral_faces)
+        expression_edges = self.faces_to_edges(expression_faces)
+
+        # Create graph objects
+        neutral_graph = Data(
+            x=torch.tensor(neutral_vertices, dtype=torch.float),  # Nodes
+            edge_index=torch.tensor(neutral_edges, dtype=torch.long).t().contiguous()  # Edges
+        )
+
+        expression_graph = Data(
+            x=torch.tensor(expression_vertices, dtype=torch.float),
+            edge_index=torch.tensor(expression_edges, dtype=torch.long).t().contiguous()
+        )
 
         return {
-            **neutral_mesh,
-            **expression_mesh,
+            'neutral_graph': neutral_graph,
+            'expression_graph': expression_graph,
             'description': self.data[item]['description']
         }
 
@@ -112,23 +137,22 @@ class FacescapeDataModule(pl.LightningDataModule):
 
         # TODO for now, only one user is taken into account
         self.required_files = [
-            Path(self.data_dir, f'{i}', 'models_reg') for i in range(100)
+            Path(self.data_dir, f'{i}', 'models_reg') for i in [-2]
         ]
 
+        # By using this custom collate a batch will have the form:
+        # (neutral_batch, expression_batch, descriptions)
+        # where neutral_batch and expression_batch are torch_geometric.data.Batch
+        # while descriptions is a list of strings
         def custom_collate(batch):
+            neutral_graphs = [item['neutral_graph'] for item in batch]
+            expression_graphs = [item['expression_graph'] for item in batch]
+            descriptions = [item['description'] for item in batch]
 
-            if isinstance(batch[0], torch.Tensor):
-                # If the first element is a tensor, stack all tensors
-                return torch.stack(batch, dim=0)
-            elif isinstance(batch[0], str):
-                # If the first element is a string, return a list of strings
-                return batch
-            elif isinstance(batch[0], dict):
-                # If the first element is a dictionary, recurse for each key
-                return {key: custom_collate([item[key] for item in batch]) for key in batch[0]}
-            else:
-                # For other types (e.g., lists, tuples), return as-is
-                return batch
+            batched_neutral = Batch.from_data_list(neutral_graphs)
+            batched_expression = Batch.from_data_list(expression_graphs)
+
+            return batched_neutral, batched_expression, descriptions
 
         self.custom_collate = custom_collate
 
@@ -152,7 +176,7 @@ class FacescapeDataModule(pl.LightningDataModule):
             self.data_dir.mkdir(parents=True, exist_ok=True)
 
         if self.download == 'infer':
-            # Check if all the required paths exist and, if a path points to a directory,
+            # Check if all the required paths exists and, if a path points to a directory,
             # check if it contains at least one element
             if any(not path.exists() or (path.is_dir() and not any(path.iterdir())) for path in self.required_files):
                 self.download = 'yes'

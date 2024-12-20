@@ -1,5 +1,28 @@
 import torch
+import torch.nn.functional as F
+from torchmetrics.functional import pairwise_euclidean_distance
 
+
+def chamfer_distance(pred, target):
+    """
+    Compute the chamfer distance between prediction and target tensors.
+    Chamfer distance is efficient to compute and works for tensors with
+    different sizes.
+    """
+
+    # Compute pairwise distances
+    distances = pairwise_euclidean_distance(pred, target)
+
+    # For each point in pred, find the closest point in target
+    min_pred_to_target = distances.min(dim=1)[0]
+
+    # For each point in target, find the closest point in min
+    min_target_to_pred = distances.min(dim=0)[0]
+
+    # Compute average of these distances
+    chamfer = torch.mean(min_pred_to_target) + torch.mean(min_target_to_pred)
+
+    return chamfer
 
 def mse_loss(pred, target):
     """
@@ -7,15 +30,7 @@ def mse_loss(pred, target):
     Penalizes larger errors more heavily, which can help converge to accurate predictions,
     but it is sensitive to outliers as larger errors dominate the loss due to squaring.
     """
-    return torch.mean((pred - target) ** 2)
-
-def mae_loss(pred, target):
-    """
-    Computes the Mean Absolute Error (MAE) loss between the predicted and target values.
-    Less sensitive to outliers compared to MSE. Penalizes errors linearly, making it
-    more robust in the presence of noise.
-    """
-    return torch.mean(torch.abs(pred - target))
+    return F.mse_loss(pred, target)
 
 def chamfer_distance(pred, target):
     """
