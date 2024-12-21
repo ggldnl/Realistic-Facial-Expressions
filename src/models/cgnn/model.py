@@ -40,6 +40,7 @@ class TextEncoder(pl.LightningModule):
 
         # Pass the text to the tokenizer and get a dictionary containing a tensor as result
         model_input = self.tokenizer(x, return_tensors="pt", padding=True, truncation=True)
+        model_input = {k: v.to(self.device) for k, v in model_input.items()}
 
         # Give the tensor to the model and take  the last hidden state
         model_output = self.text_model(**model_input)
