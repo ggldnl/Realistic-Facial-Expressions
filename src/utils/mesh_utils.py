@@ -1,20 +1,3 @@
-try:
-
-    import torch
-
-    if torch.cuda.is_available():
-        import kaolin as kal
-        import kaolin.ops.mesh
-    else:
-        print("No NVIDIA GPU detected. Using a stub for kaolin.")
-        from src.utils.kaolin_stub import KaolinStub
-        kal = KaolinStub()
-
-except ImportError as e:
-    print(f"ImportError: {e}. Using a stub for kaolin.")
-    from src.utils.kaolin_stub import KaolinStub
-    kal = KaolinStub()
-
 from pathlib import Path
 import pyvista as pv
 import numpy as np
