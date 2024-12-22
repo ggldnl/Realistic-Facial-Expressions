@@ -73,12 +73,12 @@ class FacescapeDataset(Dataset):
 
         # Create graph objects
         neutral_graph = Data(
-            x=torch.tensor(neutral_vertices, dtype=torch.float),  # Nodes
+            x=neutral_vertices.clone().detach(), # Nodes
             edge_index=torch.tensor(neutral_edges, dtype=torch.long).t().contiguous()  # Edges
         )
 
         expression_graph = Data(
-            x=torch.tensor(expression_vertices, dtype=torch.float),
+            x=expression_vertices.clone().detach(),
             edge_index=torch.tensor(expression_edges, dtype=torch.long).t().contiguous()
         )
 
