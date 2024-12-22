@@ -7,6 +7,7 @@ from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 import torch
 
+
 from src.utils.mesh_utils import read_mesh
 from src.utils.file_utils import download_resource
 from src.utils.file_utils import download_google_drive
@@ -20,12 +21,19 @@ class FacescapeDataset(Dataset):
 
     Args:
         data (list): The dataset.
+        simplify (bool): Whether to simplify the meshes
+        percent (float): Percentage of faces to drop (between 0.0 and 1.0), used if face_count is None
+        face_count (int, optional): Target number of faces in simplified mesh, overrides percent if provided
+        aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
     """
 
-    def __init__(self, data):
+    def __init__(self, data, simplify=False, percent=0.5, face_count=None, aggression=None):
         super(FacescapeDataset, self).__init__()
-
         self.data = data
+        self.simplify = simplify
+        self.percent = percent
+        self.face_count = face_count
+        self.aggression = aggression
 
     def __len__(self):
         """
@@ -58,9 +66,20 @@ class FacescapeDataset(Dataset):
         Returns:
             dict: A dictionary containing the item data.
         """
-
-        neutral_mesh = read_mesh(self.data[item]['neutral'])
-        expression_mesh = read_mesh(self.data[item]['expression'])
+        neutral_mesh = read_mesh(
+            self.data[item]['neutral'],
+            simplify=self.simplify,
+            percent=self.percent,
+            face_count=self.face_count,
+            aggression=self.aggression
+        )
+        expression_mesh = read_mesh(
+            self.data[item]['expression'],
+            simplify=self.simplify,
+            percent=self.percent,
+            face_count=self.face_count,
+            aggression=self.aggression
+        )
 
         neutral_vertices = neutral_mesh['vertices']
         neutral_faces = neutral_mesh['faces']
@@ -104,8 +123,11 @@ class FacescapeDataModule(pl.LightningDataModule):
         num_workers (int): Number of workers for DataLoaders.
         train_split (float): Proportion of data for training.
         val_split (float): Proportion of data for validation.
+        simplify (bool): Whether to simplify the meshes
+        percent (float): Percentage of faces to drop (between 0.0 and 1.0), used if face_count is None
+        face_count (int, optional): Target number of faces in simplified mesh, overrides percent if provided
+        aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
     """
-
     def __init__(self,
                  resource_url,          # URL that identifies where to download the data from
                  download_source,       # The URL can point to google drive, author's website and so on
@@ -116,6 +138,10 @@ class FacescapeDataModule(pl.LightningDataModule):
                  num_workers=4,
                  train_split=0.8,
                  val_split=0.1,
+                 simplify=False,
+                 percent=0.5,
+                 face_count=None,
+                 aggression=None
                  ):
 
         super().__init__()
@@ -126,11 +152,13 @@ class FacescapeDataModule(pl.LightningDataModule):
         self.data_dir = data_dir
         self.download = download
 
-        if text_generation is None:
+        # Mesh simplification parameters
+        self.simplify = simplify
+        self.percent = percent
+        self.face_count = face_count
+        self.aggression = aggression
 
-            # Lambda to:
-            # 1. replace "_" with " "
-            # 2. remove digits
+        if text_generation is None:
             text_generation = lambda s: ''.join(c if not c.isdigit() else '' for c in s.replace('_', ' '))
 
         self.text_generation = text_generation
@@ -243,8 +271,14 @@ class FacescapeDataModule(pl.LightningDataModule):
         if self.data is None:
             raise ValueError('You should prepare the data first (calling prepare_data())')
 
-        # Create the dataset (store it once computed)
-        full_dataset = FacescapeDataset(self.data)
+        # Create the dataset with simplification parameters
+        full_dataset = FacescapeDataset(
+            self.data,
+            simplify=self.simplify,
+            percent=self.percent,
+            face_count=self.face_count,
+            aggression=self.aggression
+        )
 
         # Compute the sizes for train, val, and test splits
         total_size = len(full_dataset)
@@ -302,8 +336,7 @@ class FacescapeDataModule(pl.LightningDataModule):
 
 
 if __name__ == '__main__':
-
-    import src.config.config as config
+    from src.models.cgnn import config
     from src.data.text_generation import DEFAULT_TEXT_GENERATION
 
     datamodule = FacescapeDataModule(
@@ -311,7 +344,9 @@ if __name__ == '__main__':
         download_source=config.DOWNLOAD_SOURCE,
         data_dir=config.DATA_DIR,
         download=config.DOWNLOAD,
-        text_generation=DEFAULT_TEXT_GENERATION
+        text_generation=DEFAULT_TEXT_GENERATION,
+        simplify=config.MESH_SIMPLIFY,
+        percent=config.MESH_DROP_PERCENTAGE
     )
 
     datamodule.prepare_data()

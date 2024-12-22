@@ -25,6 +25,10 @@ TRAIN_SPLIT = 0.8
 TEST_SPLIT = 0.1
 # 0.1 percent will be devoted to the validation set
 
+# mesh simplification
+MESH_SIMPLIFY = True
+MESH_DROP_PERCENTAGE = 0.8
+
 # ----------------------------------- Model ---------------------------------- #
 LATENT_SIZE = 512
 
