@@ -2,61 +2,81 @@ from pathlib import Path
 import pyvista as pv
 import numpy as np
 import trimesh
+import torch
 
-def read_mesh(obj_path):
+
+def read_mesh(obj_path, loader='trimesh', simplify=False, percent=0.5, face_count=None, aggression=None):
     """
     Reads a mesh file and returns its processed data.
-    """
 
+    Args:
+        obj_path (str or Path): Path to the mesh file
+        loader (str): Mesh loader to use ('trimesh' or 'kaolin')
+        simplify (bool): Whether to simplify the mesh (only works with trimesh loader)
+        percent (float): Percentage of faces to drop (between 0.0 and 1.0), used if face_count is None
+        face_count (int, optional): Target number of faces in simplified mesh, overrides percent if provided
+        aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
+
+    Returns:
+        dict: Dictionary containing mesh data (vertices, faces, normals)
+
+    Raises:
+        NotImplementedError: If loader not present
+        ValueError: If file extension is not supported or invalid parameters
+    """
     if isinstance(obj_path, str):
         obj_path = Path(obj_path)
 
-    # Load the mesh based on file extension
-    """
-    loader = 'kaolin'
-    if obj_path.suffix == ".obj":
-        mesh = kal.io.obj.import_mesh(obj_path, with_normals=True)
-    elif obj_path.suffix == ".off":
-        mesh = kal.io.off.import_mesh(obj_path)
-    elif obj_path.suffix == ".ply":
-        print("Kaolin does not support PLY. Falling back to trimesh.")
-        mesh = trimesh.load_mesh(obj_path, process=True)
-        loader = 'trimesh'
-    else:
+    # Validate file extension
+    if obj_path.suffix not in ['.obj', '.off', '.ply']:
         raise ValueError(f"Unsupported file extension for {obj_path}.")
-    """
-    loader = 'trimesh'
-    mesh = trimesh.load_mesh(obj_path, process=True)
 
-    if loader == 'trimesh':
+    match loader:
+        case 'trimesh':
+            # Load the mesh using trimesh
+            mesh = trimesh.load_mesh(obj_path, process=True)
 
-        vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
-        faces = torch.tensor(mesh.faces, dtype=torch.long)
+            # Simplify mesh if requested
+            if simplify:
+                # Validate aggression parameter
+                if aggression and not 0 <= aggression <= 10:
+                    raise ValueError("aggression must be between 0 and 10")
 
-        # Generate normals if available
-        vertex_normals = (torch.tensor(mesh.vertex_normals, dtype=torch.float32)
-                            if mesh.vertex_normals is not None else None)
-        face_normals = None  # Trimesh doesn't directly provide face normals
+                # If face_count is provided, validate it
+                if face_count is not None:
+                    if face_count < 4:
+                        raise ValueError(f"Target face count ({face_count}) too low. Minimum is 4 faces.")
+                    if face_count > len(mesh.faces):
+                        raise ValueError(f"Target face count ({face_count}) exceeds original mesh face count ({len(mesh.faces)})")
+                else:
+                    # Validate percentage
+                    if percent and not 0 < percent <= 1:
+                        raise ValueError("percent must be between 0.0 and 1.0")
 
-    else:
+                mesh = mesh.simplify_quadric_decimation(
+                    percent=percent,
+                    face_count=face_count,
+                    aggression=aggression
+                )
 
-        # Process vertices and faces
-        vertices = mesh.vertices
-        faces = mesh.faces
+            vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
+            faces = torch.tensor(mesh.faces, dtype=torch.long)
 
-        # Initialize normals and UV mappings
-        vertex_normals = (torch.nn.functional.normalize(mesh.vertex_normals.float())
-                        if mesh.vertex_normals is not None else None)
-        face_normals = (torch.nn.functional.normalize(mesh.face_normals.float())
-                        if mesh.face_normals is not None else None)
+            # Generate normals if available
+            vertex_normals = (torch.tensor(mesh.vertex_normals, dtype=torch.float32)
+                              if mesh.vertex_normals is not None else None)
+            face_normals = None
 
-    # Return the mesh data as a dictionary
+        case _:
+            raise NotImplementedError(f"Loader '{loader}' is not implemented. Only 'trimesh' is currently supported.")
+
     return {
         "vertices": vertices,
         "faces": faces,
         "vertex_normals": vertex_normals,
         "face_normals": face_normals
     }
+
 
 def visualize_mesh(mesh_data, color=(0.0, 0.0, 1.0), show_normals=False):
     """
@@ -76,7 +96,7 @@ def visualize_mesh(mesh_data, color=(0.0, 0.0, 1.0), show_normals=False):
 
     # Add normals if available
     if show_normals and vertex_normals is not None:
-         mesh["Normals"] = vertex_normals
+        mesh["Normals"] = vertex_normals
 
     # Add uniform color to all vertices
     uniform_color = np.tile(color, (vertices.shape[0], 1))
@@ -124,15 +144,3 @@ def create_trimesh_from_tensors(vertices, faces, vertex_normals=None):
         mesh.vertex_normals = vertex_normals_np
 
     return mesh
-
-
-# Test the visualization
-if __name__ == "__main__":
-
-    import src.config.config as config
-
-    mesh_path = Path(config.DATA_DIR, '100/models_reg/1_neutral.obj')
-
-    color = torch.tensor([0.0, 0.0, 1.0])
-    mesh_data = read_mesh(mesh_path)
-    visualize_mesh(mesh_data, color=color)
