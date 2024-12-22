@@ -10,11 +10,13 @@ if __name__ == "__main__":
     # Instantiate the renderer
     renderer = Renderer()
 
+    data_dir = Path(__file__).parent.parent.parent / "datasets" / "facescape"
+
     # Render the mesh using PyVista
-    mesh_path = Path(config.DATA_DIR, '100/models_reg/1_neutral.obj')
+    mesh_path = Path(data_dir, '100/models_reg/1_neutral.obj')
 
     # Output folder for the images
-    output_dir = Path(config.DATA_DIR, "100/models_reg/1_neutral_renders")
+    output_dir = Path(data_dir, "100/models_reg/1_neutral_renders")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Full 360-degree scan, every 45 degrees

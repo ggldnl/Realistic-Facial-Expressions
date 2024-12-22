@@ -18,7 +18,9 @@ if __name__ == '__main__':
         data_dir=config.DATA_DIR,
         download=config.DOWNLOAD,
         text_generation=DEFAULT_TEXT_GENERATION,
-        batch_size=config.BATCH_SIZE
+        batch_size=config.BATCH_SIZE,
+        simplify=config.MESH_SIMPLIFY,
+        percent=config.MESH_DROP_PERCENTAGE
     )
 
     # Log to tensorboard
@@ -27,6 +29,7 @@ if __name__ == '__main__':
     trainer = pl.Trainer(
         max_epochs=config.EPOCHS,
         logger=logger,
+        accelerator='auto',
         # gradient_clip_val=1.0,
         callbacks=[
             TQDMProgressBar(refresh_rate=20),
@@ -37,7 +40,8 @@ if __name__ == '__main__':
     # Create the model
     model = Model(
         config.LATENT_SIZE,
-        lr=config.LEARNING_RATE
+        lr=config.LEARNING_RATE,
+        batch_size=config.BATCH_SIZE
     )
 
     trainer.fit(model, datamodule)
