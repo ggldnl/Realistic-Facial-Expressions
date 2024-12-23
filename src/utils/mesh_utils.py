@@ -9,9 +9,9 @@ import torch
 def read_mesh(
         obj_path,
         loader='trimesh',
-        mesh_drop_percent=0.5,
+        mesh_drop_percent=None,
         mesh_face_count=None,
-        aggression=0
+        aggression=None
 ):
     """
     Reads a mesh file and returns its processed data.

@@ -10,7 +10,7 @@ def process_dir(source, destination, percent=None):
     and saving the results in the destination directory.
     """
 
-    for file_path in source.rglob("*.obj"):
+    for file_path in tqdm(source.rglob("*.obj")):
 
         # Compute the relative path to maintain directory structure
         relative_path = file_path.relative_to(source)
