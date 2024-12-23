@@ -4,9 +4,11 @@ from pytorch_lightning.loggers import TensorBoardLogger
 import pytorch_lightning as pl
 
 from src.data.text_generation import DEFAULT_TEXT_GENERATION
+
 from src.data.datamodule import FacescapeDataModule
-from src.models.cgnn.model import Model
-import src.models.cgnn.config as config
+from src.models.gnn.model import Model
+import src.models.gnn.config as config
+from src.models.gnn.callbacks import RenderCallback
 
 
 if __name__ == '__main__':
@@ -19,12 +21,25 @@ if __name__ == '__main__':
         download=config.DOWNLOAD,
         text_generation=DEFAULT_TEXT_GENERATION,
         batch_size=config.BATCH_SIZE,
-        simplify=config.MESH_SIMPLIFY,
-        percent=config.MESH_DROP_PERCENTAGE
+        mesh_drop_percent=config.MESH_DROP_PERCENTAGE
     )
 
     # Log to tensorboard
     logger = TensorBoardLogger("data/logs/", name="ConvGNN")
+
+    # Create the model
+    model = Model(
+        config.LATENT_SIZE,
+        lr=config.LEARNING_RATE
+    )
+
+    render_callback = RenderCallback(
+        n_epochs=10,
+        model=model,
+        in_mesh=config.DATA_DIR / '100/models_reg/1_neutral.obj',
+        out_dir=config.RENDER_DIR,
+        prompt='smile'
+    )
 
     trainer = pl.Trainer(
         max_epochs=config.EPOCHS,
@@ -33,15 +48,11 @@ if __name__ == '__main__':
         # gradient_clip_val=1.0,
         callbacks=[
             TQDMProgressBar(refresh_rate=20),
-            EarlyStopping(monitor='val_loss', patience=config.PATIENCE, mode='min')
-        ]
-    )
+            EarlyStopping(monitor='val_loss', patience=config.PATIENCE, mode='min'),
 
-    # Create the model
-    model = Model(
-        config.LATENT_SIZE,
-        lr=config.LEARNING_RATE,
-        batch_size=config.BATCH_SIZE
+            # Custom render callback
+            render_callback
+        ]
     )
 
     trainer.fit(model, datamodule)

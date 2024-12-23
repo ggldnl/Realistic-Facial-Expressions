@@ -6,7 +6,7 @@ import numpy as np
 from typing import Tuple, Optional, Dict, Any
 
 from src.models.mlp.clip import CLIP
-from src.utils.mesh_utils import create_trimesh_from_tensors
+from src.utils.mesh_utils import tensor_to_mesh
 from src.utils.renderer import Renderer
 
 
@@ -242,11 +242,11 @@ class NeuralStyleTransfer(pl.LightningModule):
         target_rendered_images = []
 
         for idx in range(batch_size):
-            computed_model = create_trimesh_from_tensors(vertices=deformed_vertices[idx],
-                                                         faces=batch['expression_faces'][idx])
+            computed_model = tensor_to_mesh(vertices=deformed_vertices[idx],
+                                            faces=batch['expression_faces'][idx])
 
-            target_model = create_trimesh_from_tensors(vertices=target_vertices[idx],
-                                                       faces=batch['expression_faces'][idx])
+            target_model = tensor_to_mesh(vertices=target_vertices[idx],
+                                          faces=batch['expression_faces'][idx])
 
 
 

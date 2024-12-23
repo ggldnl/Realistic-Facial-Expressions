@@ -1,3 +1,4 @@
+from pathlib import Path
 import numpy as np
 import pyvista
 import trimesh
@@ -147,8 +148,7 @@ class Renderer:
                cam_view=None,
                up_vector=None,
                scale=1.0,
-               rend_size=(512, 512),
-               from_path=True
+               rend_size=(512, 512)
                ):
         """
         Renders the mesh using PyVista. PyVista uses a camera model where the camera position, direction,
@@ -160,7 +160,7 @@ class Renderer:
         if Rt is not None and (cam_pos is not None or cam_view is not None or up_vector is not None):
             raise ValueError('Multiple ways to compute camera position and orientation provided.')
 
-        if from_path:
+        if isinstance(model_in, str) or isinstance(model_in, Path):
             # Load the mesh using trimesh
             mesh = self._load_mesh(model_in)
         else:
@@ -206,15 +206,18 @@ class Renderer:
 
 
 if __name__ == "__main__":
+
     from pathlib import Path
     import matplotlib.pyplot as plt
-    from src.config import config
+
+    root_dir = Path(__file__).parent.parent.parent
+    data_dir = Path(root_dir, 'datasets/facescape')
 
     # Instantiate the renderer
     renderer = Renderer()
 
     # Render using the OpenGL camera method
-    mesh_path = Path(config.DATA_DIR, '100/models_reg/1_neutral.obj')
+    mesh_path = Path(data_dir, '100/models_reg/1_neutral.obj')
 
     # Render the mesh using PyVista and get the image
     rendered_img = renderer.render(

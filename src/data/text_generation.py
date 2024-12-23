@@ -23,7 +23,8 @@ def wrap(s):
     return f"A human face with {s} expression"
 
 # Predefined text generations
-DEFAULT_TEXT_GENERATION = compose(replace_underscores, remove_numbers, remove_extension, strip, wrap)
+# DEFAULT_TEXT_GENERATION = compose(replace_underscores, remove_numbers, remove_extension, strip, wrap)
+DEFAULT_TEXT_GENERATION = compose(replace_underscores, remove_numbers, remove_extension, strip)
 
 
 if __name__ == '__main__':
@@ -32,4 +33,4 @@ if __name__ == '__main__':
     filename = "1_neutral.ply"
     process_filename = compose(replace_underscores, remove_numbers, remove_extension)
     print(f'{filename} -> replace_uderscores, remove_numbers, remove_extension -> {process_filename(filename)}')  # Output: "neutral"
-    print(f'{filename} -> DEFAULT_TEXT_GENERATION -> {DEFAULT_TEXT_GENERATION(filename)}')  # Output: "A human face with a neutral expression"
+    # print(f'{filename} -> DEFAULT_TEXT_GENERATION -> {DEFAULT_TEXT_GENERATION(filename)}')  # Output: "A human face with a neutral expression"

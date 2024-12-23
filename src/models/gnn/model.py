@@ -80,10 +80,10 @@ class Model(pl.LightningModule):
         # Define the loss function
         self.loss_fn = chamfer_distance
 
-    def forward(self, neutral_graph, text_embeddings):
+    def forward(self, neutral_graph, descriptions):
 
         # Text conditioning
-        text_condition = text_embeddings.unsqueeze(1)
+        text_condition = self.text_encoder(descriptions).unsqueeze(1)
 
         x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
         x = x + text_condition
@@ -98,8 +98,7 @@ class Model(pl.LightningModule):
         target = batch['expression_graph']
         descriptions = batch['description']
 
-        text_embeddings = self.text_encoder(descriptions)
-        pred = self(neutral_vertices, text_embeddings)
+        pred = self(neutral_vertices, descriptions)
 
         loss = self.loss_fn(pred, target.x)
         return loss

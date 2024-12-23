@@ -1,3 +1,4 @@
+from torch_geometric.data import Data
 from pathlib import Path
 import pyvista as pv
 import numpy as np
@@ -5,16 +6,21 @@ import trimesh
 import torch
 
 
-def read_mesh(obj_path, loader='trimesh', simplify=False, percent=0.5, face_count=None, aggression=None):
+def read_mesh(
+        obj_path,
+        loader='trimesh',
+        mesh_drop_percent=0.5,
+        mesh_face_count=None,
+        aggression=0
+):
     """
     Reads a mesh file and returns its processed data.
 
     Args:
         obj_path (str or Path): Path to the mesh file
-        loader (str): Mesh loader to use ('trimesh' or 'kaolin')
-        simplify (bool): Whether to simplify the mesh (only works with trimesh loader)
-        percent (float): Percentage of faces to drop (between 0.0 and 1.0), used if face_count is None
-        face_count (int, optional): Target number of faces in simplified mesh, overrides percent if provided
+        loader (str): Mesh loader to use (for now, only 'trimesh' is supported)
+        mesh_drop_percent (float): Percentage of faces to drop (between 0.0 and 1.0)
+        mesh_face_count (int, optional): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
         aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
 
     Returns:
@@ -36,39 +42,85 @@ def read_mesh(obj_path, loader='trimesh', simplify=False, percent=0.5, face_coun
             # Load the mesh using trimesh
             mesh = trimesh.load_mesh(obj_path, process=True)
 
-            # Simplify mesh if requested
-            if simplify:
-                # Validate aggression parameter
-                if aggression and not 0 <= aggression <= 10:
-                    raise ValueError("aggression must be between 0 and 10")
+            # Simplify the mesh if mesh_drop_percent or mesh_face_count are provided
+            if mesh_drop_percent or mesh_face_count:
 
-                # If face_count is provided, validate it
-                if face_count is not None:
-                    if face_count < 4:
-                        raise ValueError(f"Target face count ({face_count}) too low. Minimum is 4 faces.")
-                    if face_count > len(mesh.faces):
-                        raise ValueError(f"Target face count ({face_count}) exceeds original mesh face count ({len(mesh.faces)})")
+                # Validate mesh_face_count
+                if mesh_face_count is not None:
+                    if mesh_face_count < 4:
+                        raise ValueError(f"Target face count ({mesh_face_count}) too low. We can have a minimum of 4 faces for the mesh to be watertight.")
+                    if mesh_face_count > len(mesh.faces):
+                        raise ValueError(f"Target face count ({mesh_face_count}) exceeds original mesh face count ({len(mesh.faces)}).")
+
+                # Validate percentage if mesh_face_count is not provided
                 else:
-                    # Validate percentage
-                    if percent and not 0 < percent <= 1:
+                    if mesh_drop_percent and not 0 < mesh_drop_percent <= 1:
                         raise ValueError("percent must be between 0.0 and 1.0")
 
+                if aggression and not 0 <= aggression <= 10:
+                    raise ValueError("The aggression parameter must be an integer in range [0, 10]")
+
                 mesh = mesh.simplify_quadric_decimation(
-                    percent=percent,
-                    face_count=face_count,
+                    percent=mesh_drop_percent,
+                    face_count=mesh_face_count,
                     aggression=aggression
                 )
 
-            vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
-            faces = torch.tensor(mesh.faces, dtype=torch.long)
-
-            # Generate normals if available
-            vertex_normals = (torch.tensor(mesh.vertex_normals, dtype=torch.float32)
-                              if mesh.vertex_normals is not None else None)
-            face_normals = None
 
         case _:
             raise NotImplementedError(f"Loader '{loader}' is not implemented. Only 'trimesh' is currently supported.")
+
+    return mesh
+
+
+def read_graph(obj_path, **kwargs):
+    """
+    Reads the mesh file and returns a torch_geometric.data.Data graph.
+
+    Args:
+        obj_path (str or pathlib.Path): Path to the mesh.
+
+    Returns:
+        torch_geometric.data.Data: Graph generated from the mesh at obj_path.
+    """
+
+    mesh = read_mesh(obj_path, **kwargs)
+
+    vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
+    faces = torch.tensor(mesh.faces, dtype=torch.long)
+
+    # Convert faces to edges
+    edge_list = faces_to_edges(faces.numpy(force=True))
+    edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+
+    # Create graph object
+    graph = Data(
+        x=vertices,  # Nodes (vertex features)
+        edge_index=edge_index  # Edges
+    )
+    return graph
+
+
+def read_dict(obj_path, **kwargs):
+    """
+    Reads the mesh file and returns a dictionary containing its data.
+
+    Args:
+        obj_path (str or pathlib.Path): Path to the mesh.
+
+    Returns:
+        dict: Dictionary generated from the mesh at obj_path.
+    """
+
+    mesh = read_mesh(obj_path, **kwargs)
+
+    vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
+    faces = torch.tensor(mesh.faces, dtype=torch.long)
+
+    # Generate normals if available
+    vertex_normals = (torch.tensor(mesh.vertex_normals, dtype=torch.float32)
+                      if mesh.vertex_normals is not None else None)
+    face_normals = None
 
     return {
         "vertices": vertices,
@@ -78,17 +130,26 @@ def read_mesh(obj_path, loader='trimesh', simplify=False, percent=0.5, face_coun
     }
 
 
-def visualize_mesh(mesh_data, color=(0.0, 0.0, 1.0), show_normals=False):
+def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_normals=False):
     """
     Visualizes the mesh and its normals using common data from read_mesh.
     """
-    # Extract vertices and faces
-    vertices = mesh_data["vertices"].cpu().numpy()
-    faces = mesh_data["faces"].cpu().numpy().flatten()
 
-    # Check if vertex normals are available
-    vertex_normals = (mesh_data["vertex_normals"].cpu().numpy()
-                      if mesh_data["vertex_normals"] is not None else None)
+    # Extract vertices and faces
+    if isinstance(mesh, dict):
+        vertices = mesh["vertices"].numpy(force=True)
+        faces = mesh["faces"].numpy(force=True).flatten()
+
+        # Check if vertex normals are available
+        vertex_normals = (mesh["vertex_normals"].numpy(force=True)
+                          if mesh["vertex_normals"] is not None else None)
+
+    else:
+        vertices = mesh.vertices
+        faces = mesh.faces
+
+        # Generate normals if available
+        vertex_normals = mesh.vertex_normals if mesh.vertex_normals is not None else None
 
     # Convert faces to PyVista format (prefix each face with the number of vertices, 3 for triangles)
     pv_faces = np.insert(faces.reshape(-1, 3), 0, 3, axis=1)  # PyVista expects this format
@@ -115,7 +176,7 @@ def visualize_mesh(mesh_data, color=(0.0, 0.0, 1.0), show_normals=False):
     plotter.show()
 
 
-def create_trimesh_from_tensors(vertices, faces, vertex_normals=None):
+def tensor_to_mesh(vertices, faces, vertex_normals=None):
     """
     Creates a trimesh object from tensor data.
 
@@ -127,20 +188,52 @@ def create_trimesh_from_tensors(vertices, faces, vertex_normals=None):
     Returns:
         trimesh.Trimesh: The created mesh object
     """
-    # Convert tensors to numpy arrays
-    vertices_np = vertices.detach().cpu().numpy()
-    faces_np = faces.detach().cpu().numpy()
+
+    # If force is True this is equivalent to calling t.detach().cpu().resolve_conj().resolve_neg().numpy()
+    vertices_np = vertices.numpy(force=True)
+    faces_np = faces.numpy(force=True)
 
     # Create the mesh
     mesh = trimesh.Trimesh(
         vertices=vertices_np,
-        faces=faces_np,
-        process=False
+        faces=faces_np
     )
 
     # If vertex normals are provided, set them
     if vertex_normals is not None:
-        vertex_normals_np = vertex_normals.detach().cpu().numpy()
+        vertex_normals_np = vertex_normals.numpy(force=True)
         mesh.vertex_normals = vertex_normals_np
 
     return mesh
+
+
+def faces_to_edges(faces):
+    """
+    Given the faces of a mesh, create the unique edges.
+
+    Args:
+        faces (list of list or tuple, tensor): A list of faces, where each face is
+            represented as a list or tuple of vertex indices (e.g., [v1, v2, v3]).
+
+    Returns:
+        list of tuple: A list of unique edges, where each edge is a tuple of two
+            vertex indices (e.g., (v1, v2)). The vertex indices in each edge are
+            sorted in ascending order.
+    """
+    edges = set()
+    for face in faces:
+        edges.add(tuple(sorted([face[0], face[1]])))
+        edges.add(tuple(sorted([face[1], face[2]])))
+        edges.add(tuple(sorted([face[2], face[0]])))
+    return list(edges)
+
+
+# Test the visualization
+if __name__ == "__main__":
+
+    root_dir = Path(__file__).parent.parent.parent
+    mesh_path = Path(root_dir, 'datasets/facescape/100/models_reg/1_neutral.obj')
+
+    color = torch.tensor([0.0, 0.0, 1.0])
+    mesh_data = read_dict(mesh_path)
+    visualize_mesh(mesh_data, color=color)
