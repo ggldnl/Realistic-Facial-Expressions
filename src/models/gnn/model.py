@@ -113,10 +113,10 @@ class Model(pl.LightningModule):
 
         for idx in range(self.batch_size):
             computed_mesh = tensor_to_mesh(vertices=batch['neutral_graph'][idx].x,
-                                            faces=batch['neutral_graph'][idx].edge_index,)
+                                            faces=batch['neutral_graph'][idx].faces,)
 
             target_mesh = tensor_to_mesh(vertices=batch['expression_graph'][idx].x,
-                                          faces=batch['expression_graph'][idx].edge_index,)
+                                          faces=batch['expression_graph'][idx].faces,)
 
             # Render views
             computed_rendered_images.append(self.renderer.render_viewpoints(
