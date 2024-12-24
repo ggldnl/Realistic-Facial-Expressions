@@ -3,8 +3,6 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
 
-
-from src.utils.renderer import Renderer
 from src.utils.mesh_utils import read_graph
 from src.utils.mesh_utils import tensor_to_mesh
 
@@ -44,44 +42,25 @@ class RenderCallback(Callback):
         self.render_w = render_w
         self.render_h = render_h
 
-        self.renderer = Renderer()
-
-
     def on_validation_epoch_end(self, trainer, pl_module):
-
         epoch = trainer.current_epoch
         if epoch % self.n_epochs == 0:
-
             print(f'\nPerforming inference on neutral mesh {self.in_mesh} with prompt: \'{self.prompt}\'')
 
             neutral_mesh = read_graph(self.in_mesh)
             x = self.model(neutral_mesh, [self.prompt])
-            pred_mesh = tensor_to_mesh(x.squeeze(0), neutral_mesh.edge_index)  # Batch containing a single mesh -> squeeze batch
-            print(f'Inference completed. Performing rendering...')
+            pred_mesh = tensor_to_mesh(x.squeeze(0),
+                                       neutral_mesh.edge_index)  # Batch containing a single mesh -> squeeze batch
+            print('Inference completed. Performing rendering...')
 
-            # Full 360-degree scan, every 45 degrees
-            angle_step = 360 / self.n_viewpoints
+            renders = self.model.renderer.render_viewpoints(model_in=pred_mesh,
+                                                            num_views=self.n_viewpoints,
+                                                            radius=self.distance,
+                                                            elevation=self.elevation,
+                                                            scale=1.0,
+                                                            rend_size=(self.render_w, self.render_h))
 
-            renders = []
-            for i in range(self.n_viewpoints):
-
-                angle = i * angle_step
-
-                cam_pos, cam_view, up_vector = Renderer.cylindrical_to_pyvista(self.distance, self.elevation, angle)
-
-                # Render the image
-                rendered_img = self.renderer.render(
-                    model_in=pred_mesh,
-                    cam_pos=cam_pos,
-                    cam_view=cam_view,
-                    up_vector=up_vector,
-                    scale=1.0,
-                    rend_size=(self.render_w, self.render_h)
-                )
-
-                renders.append(rendered_img)
-
-            print(f'Rendering completed. Saving the result...')
+            print('Rendering completed. Saving the result...')
 
             # Stitch together the images
             stitched_image = np.concatenate(renders, axis=1)
