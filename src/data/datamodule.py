@@ -111,6 +111,7 @@ class FacescapeDataModule(pl.LightningDataModule):
         mesh_face_count (int, optional): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
         aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
     """
+
     def __init__(self,
                  resource_url,          # URL that identifies where to download the data from
                  download_source,       # The URL can point to google drive, author's website and so on

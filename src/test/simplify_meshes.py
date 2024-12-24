@@ -1,6 +1,8 @@
 import argparse
 from pathlib import Path
 
+from tqdm import tqdm
+
 from src.utils.mesh_utils import read_mesh
 
 

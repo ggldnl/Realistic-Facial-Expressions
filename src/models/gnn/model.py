@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch
 
 from src.utils.loss import chamfer_distance
+from src.utils.mesh_utils import tensor_to_mesh
+from src.utils.renderer import Renderer
 
 
 class TextEncoder(pl.LightningModule):
@@ -77,6 +79,8 @@ class Model(pl.LightningModule):
         self.gcn2 = GCNConv(self.latent_size, self.input_dim)
         self.text_encoder = TextEncoder(self.latent_size)
 
+        self.renderer = Renderer()
+
         # Define the loss function
         self.loss_fn = chamfer_distance
 
@@ -103,8 +107,48 @@ class Model(pl.LightningModule):
         loss = self.loss_fn(pred, target.x)
         return loss
 
+    def compute_metrics(self, batch):
+        computed_rendered_images = []
+        target_rendered_images = []
+
+        for idx in range(self.batch_size):
+            computed_mesh = tensor_to_mesh(vertices=batch['neutral_graph'][idx].x,
+                                            faces=batch['neutral_graph'][idx].edge_index,)
+
+            target_mesh = tensor_to_mesh(vertices=batch['expression_graph'][idx].x,
+                                          faces=batch['expression_graph'][idx].edge_index,)
+
+            # Render views
+            computed_rendered_images.append(self.renderer.render_viewpoints(
+                model_in=computed_mesh,
+                num_views=8,
+                radius=600,
+                elevation=0,
+                scale=1.0,
+                rend_size=(1024, 1024),
+                return_images=True
+            ))
+            target_rendered_images.append(self.renderer.render_viewpoints(
+                model_in=target_mesh,
+                num_views=8,
+                radius=600,
+                elevation=0,
+                scale=1.0,
+                rend_size=(1024, 1024),
+                return_images=True
+            ))
+            print("")
+            for computed, target in zip(computed_rendered_images, target_rendered_images):
+
+                # Calculate metrics
+                mse_loss = nn.MSELoss()
+                mse = mse_loss(computed, target)
+
+
+
     def training_step(self, batch, batch_idx):
         loss = self.common_step(batch)
+        self.compute_metrics(batch)
         self.log("train_loss",
                  loss,
                  prog_bar=True,
@@ -114,6 +158,7 @@ class Model(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss = self.common_step(batch)
+        self.compute_metrics(batch)
         self.log("val_loss",
                  loss,
                  prog_bar=True,

@@ -95,15 +95,15 @@ class Renderer:
 
         return transformation_matrix
 
-    def multiple_render(self,
-                        model_in,
-                        num_views=8,
-                        radius=600,
-                        elevation=0,
-                        scale=1.0,
-                        rend_size=(1024, 768),
-                        from_path=True
-                        ):
+    def render_viewpoints(self,
+                          model_in,
+                          num_views=8,
+                          radius=600,
+                          elevation=0,
+                          scale=1.0,
+                          rend_size=(1024, 768),
+                          return_images=False
+                          ):
         """
         Renders multiple views of the mesh by rotating the camera around the object.
 
@@ -114,7 +114,7 @@ class Renderer:
             elevation (float): Height of camera above the object (default: 0)
             scale (float): Scale factor for the mesh (default: 1.0)
             rend_size (tuple): Resolution of rendered images (width, height) (default: (1024, 768))
-            from_path (bool): Whether to load the mesh from a path (default: True)
+            return_images (bool): If True, return raw images else return pyvista objects
 
         Returns:
             list: List of numpy arrays containing the rendered images
@@ -134,7 +134,7 @@ class Renderer:
                 up_vector=up_vector,
                 scale=scale,
                 rend_size=rend_size,
-                from_path=from_path
+                return_as_image=return_images
             )
 
             rendered_images.append(rendered_img)
@@ -148,7 +148,8 @@ class Renderer:
                cam_view=None,
                up_vector=None,
                scale=1.0,
-               rend_size=(512, 512)
+               rend_size=(512, 512),
+               return_as_image=False
                ):
         """
         Renders the mesh using PyVista. PyVista uses a camera model where the camera position, direction,
@@ -201,7 +202,9 @@ class Renderer:
         # Close the plotter to release resources
         plotter.close()
 
-        # Return the rendered image
+        if return_as_image:
+            from PIL import Image
+            return Image.fromarray(img)
         return img
 
 
