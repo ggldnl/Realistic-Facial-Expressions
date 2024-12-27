@@ -33,6 +33,11 @@ class RenderCallback(Callback):
         self.prompt = prompt
         self.out_dir = out_dir
 
+        if isinstance(self.out_dir, str):
+            self.out_dir = Path(self.out_dir)
+
+        self.out_dir.mkdir(exist_ok=True, parents=True)
+
         self.in_mesh = in_mesh if isinstance(in_mesh, Path) else Path(in_mesh)
         assert "neutral" in self.in_mesh.stem, "The provided file appears not to be a valid neutral mesh."
 
