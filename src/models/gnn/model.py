@@ -4,9 +4,12 @@ import pytorch_lightning as pl
 import torch.nn as nn
 import torch
 
-from src.utils.loss import chamfer_distance
-from src.utils.mesh_utils import tensor_to_mesh
 from src.utils.renderer import Renderer
+
+from src.utils.loss import chamfer_distance
+from src.utils.loss import mse_loss
+
+from src.utils.mesh_utils import tensor_to_mesh, visualize_mesh, iterate_batch
 
 
 class TextEncoder(pl.LightningModule):
@@ -63,8 +66,7 @@ class Model(pl.LightningModule):
     def __init__(self,
                  latent_size,
                  input_dim=3,
-                 lr=1e-3,
-                 batch_size=4,
+                 lr=1e-3
                  ):
 
         super().__init__()
@@ -72,7 +74,6 @@ class Model(pl.LightningModule):
         self.latent_size = latent_size
         self.input_dim = input_dim
         self.lr = lr
-        self.batch_size = batch_size
 
         # Define the architecture
         self.gcn1 = GCNConv(self.input_dim, self.latent_size)
@@ -89,10 +90,11 @@ class Model(pl.LightningModule):
         # Text conditioning
         text_condition = self.text_encoder(descriptions).unsqueeze(1)
 
-        x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
-        x = x + text_condition
-        x = torch.relu(x)
-        x = self.gcn2(x, neutral_graph.edge_index)
+        # x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
+        # x = x + text_condition
+        # x = torch.relu(x)
+        # x = self.gcn2(x, neutral_graph.edge_index)
+        x = neutral_graph.x
 
         return x
 
@@ -111,7 +113,9 @@ class Model(pl.LightningModule):
         computed_rendered_images = []
         target_rendered_images = []
 
+        """
         for idx in range(self.batch_size):
+
             computed_mesh = tensor_to_mesh(vertices=pred[idx],
                                             faces=batch['neutral_graph'][idx].faces,)
 
@@ -137,13 +141,13 @@ class Model(pl.LightningModule):
                 rend_size=(1024, 1024),
                 return_images=True
             ))
-            print("")
+
             for computed, target in zip(computed_rendered_images, target_rendered_images):
 
                 # Calculate metrics
                 mse_loss = nn.MSELoss()
                 mse = mse_loss(computed, target)
-
+            """
 
 
     def training_step(self, batch, batch_idx):
@@ -152,8 +156,7 @@ class Model(pl.LightningModule):
         self.log("train_loss",
                  loss,
                  prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+                 logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -162,8 +165,7 @@ class Model(pl.LightningModule):
         self.log("val_loss",
                  loss,
                  prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+                 logger=True)
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -171,8 +173,7 @@ class Model(pl.LightningModule):
         self.log("test_loss",
                  loss,
                  prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+                 logger=True)
         return loss
 
     def configure_optimizers(self):

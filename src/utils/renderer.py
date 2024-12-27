@@ -149,7 +149,8 @@ class Renderer:
                up_vector=None,
                scale=1.0,
                rend_size=(512, 512),
-               return_as_image=False
+               return_as_image=False,
+               show_edges=True
                ):
         """
         Renders the mesh using PyVista. PyVista uses a camera model where the camera position, direction,
@@ -194,7 +195,7 @@ class Renderer:
 
         # Add the mesh to the plotter
         plotter.clear()
-        plotter.add_mesh(pv_mesh, color="lightblue", show_edges=True)
+        plotter.add_mesh(pv_mesh, color="lightblue", show_edges=show_edges)
 
         # Render the scene and capture the image as a numpy array
         img = plotter.screenshot(return_img=True)

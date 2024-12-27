@@ -10,6 +10,7 @@ import torch
 
 from src.utils.mesh_utils import faces_to_edges
 from src.utils.mesh_utils import read_dict
+
 from src.utils.file_utils import download_resource
 from src.utils.file_utils import download_google_drive
 from src.utils.file_utils import extract_zip
@@ -53,23 +54,23 @@ class FacescapeDataset(Dataset):
         Returns:
             dict: A dictionary containing the item data.
         """
-        neutral_mesh = read_dict(
+        neutral_mesh_dict = read_dict(
             self.data[item]['neutral'],
             mesh_drop_percent=self.mesh_drop_percent,
             mesh_face_count=self.mesh_face_count,
             aggression=self.aggression
         )
-        expression_mesh = read_dict(
+        expression_mesh_dict = read_dict(
             self.data[item]['expression'],
             mesh_drop_percent=self.mesh_drop_percent,
             mesh_face_count=self.mesh_face_count,
             aggression=self.aggression
         )
 
-        neutral_vertices = neutral_mesh['vertices']
-        neutral_faces = neutral_mesh['faces']
-        expression_vertices = expression_mesh['vertices']
-        expression_faces = expression_mesh['faces']
+        neutral_vertices = neutral_mesh_dict['vertices']
+        neutral_faces = neutral_mesh_dict['faces']
+        expression_vertices = expression_mesh_dict['vertices']
+        expression_faces = expression_mesh_dict['faces']
 
         # Convert the mesh to graph: vertices as nodes, edges from faces
         neutral_edges = faces_to_edges(neutral_faces)
@@ -77,15 +78,15 @@ class FacescapeDataset(Dataset):
 
         # Create graph objects
         neutral_graph = Data(
-            x=neutral_vertices.clone().detach(), # Nodes
-            edge_index=torch.tensor(neutral_edges, dtype=torch.long).t().contiguous(),  # Edges
-            faces=torch.tensor(neutral_faces, dtype=torch.long)
+            x=neutral_vertices.clone().detach(),  # Vertices
+            edge_index=torch.tensor(neutral_edges, dtype=torch.long).t(),  # Edges
+            faces=neutral_faces.clone().detach()  # Faces
         )
 
         expression_graph = Data(
             x=expression_vertices.clone().detach(),
-            edge_index=torch.tensor(expression_edges, dtype=torch.long).t().contiguous(),
-            faces=torch.tensor(expression_faces, dtype=torch.long)
+            edge_index=torch.tensor(expression_edges, dtype=torch.long).t(),
+            faces=expression_faces.clone().detach()
         )
 
         return {
@@ -148,7 +149,7 @@ class FacescapeDataModule(pl.LightningDataModule):
 
         # TODO for now, only one user is taken into account
         self.required_files = [
-            Path(self.data_dir, f'{i}', 'models_reg') for i in [-2]
+            Path(self.data_dir, f'{i}', 'models_reg') for i in [100]
         ]
 
         # By using this custom collate a batch will have the form:
@@ -322,6 +323,9 @@ if __name__ == '__main__':
     from src.models.gnn import config
     from src.data.text_generation import DEFAULT_TEXT_GENERATION
 
+    from src.utils.mesh_utils import visualize_mesh
+    from src.utils.mesh_utils import iterate_batch
+
     datamodule = FacescapeDataModule(
         resource_url=config.RESOURCE_URL,
         download_source=config.DOWNLOAD_SOURCE,
@@ -345,5 +349,11 @@ if __name__ == '__main__':
         print(f'\nBatch consist of:')
         for key, value in batch.items():
             print(f'{key}: {value}')
+
+        print(f'\nIterating batch...')
+        neutral_databatch = batch['neutral_graph']
+        for mesh in iterate_batch(neutral_databatch):
+            visualize_mesh(mesh)
+            break
 
         break

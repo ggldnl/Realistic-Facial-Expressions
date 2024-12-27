@@ -25,7 +25,7 @@ if __name__ == '__main__':
     )
 
     # Log to tensorboard
-    logger = TensorBoardLogger("data/logs/", name="ConvGNN")
+    logger = TensorBoardLogger(config.LOG_DIR, name="GNN")
 
     # Create the model
     model = Model(

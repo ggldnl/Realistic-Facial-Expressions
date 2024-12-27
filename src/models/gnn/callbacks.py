@@ -4,7 +4,9 @@ from pathlib import Path
 import numpy as np
 
 from src.utils.mesh_utils import read_graph
+from src.utils.mesh_utils import read_mesh
 from src.utils.mesh_utils import tensor_to_mesh
+from src.utils.mesh_utils import visualize_mesh
 
 
 class RenderCallback(Callback):
@@ -55,7 +57,7 @@ class RenderCallback(Callback):
             neutral_mesh = read_graph(self.in_mesh)
             x = self.model(neutral_mesh, [self.prompt])
             pred_mesh = tensor_to_mesh(x.squeeze(0),
-                                       neutral_mesh.edge_index)  # Batch containing a single mesh -> squeeze batch
+                                       neutral_mesh.faces)  # Batch containing a single mesh -> squeeze batch
             print('Inference completed. Performing rendering...')
 
             renders = self.model.renderer.render_viewpoints(model_in=pred_mesh,

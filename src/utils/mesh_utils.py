@@ -96,7 +96,8 @@ def read_graph(obj_path, **kwargs):
     # Create graph object
     graph = Data(
         x=vertices,  # Nodes (vertex features)
-        edge_index=edge_index  # Edges
+        edge_index=edge_index,  # Edges
+        faces=faces
     )
     return graph
 
@@ -143,6 +144,13 @@ def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_normals=False):
         # Check if vertex normals are available
         vertex_normals = (mesh["vertex_normals"].numpy(force=True)
                           if mesh["vertex_normals"] is not None else None)
+
+    elif isinstance(mesh, Data):
+        vertices = mesh.x
+        faces = mesh.faces
+
+        # Generate normals if available
+        vertex_normals = None
 
     else:
         vertices = mesh.vertices
@@ -226,6 +234,13 @@ def faces_to_edges(faces):
         edges.add(tuple(sorted([face[1], face[2]])))
         edges.add(tuple(sorted([face[2], face[0]])))
     return list(edges)
+
+
+def iterate_batch(batch):
+
+    for idx in range(batch.num_graphs):
+        yield tensor_to_mesh(vertices=batch[idx].x,
+                                       faces=batch[idx].faces)
 
 
 # Test the visualization

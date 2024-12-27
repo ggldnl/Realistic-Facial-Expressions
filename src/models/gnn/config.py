@@ -7,10 +7,14 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
 
 # Where to check or put the downloaded data
-DATA_DIR = Path(ROOT_DIR, 'datasets/facescape')
+DATA_DIR = Path(ROOT_DIR, 'datasets/facescape_simplified')
 
-# Where to put renderings
-RENDER_DIR = Path('./renders')
+# Model folder
+MODEL_DIR = Path(ROOT_DIR, 'src/models/gnn')
+
+# Where to put renderings and logs
+RENDER_DIR = Path(MODEL_DIR, 'data/renders')
+LOG_DIR = Path(MODEL_DIR, 'data/logs')
 
 # ---------------------------------- Dataset --------------------------------- #
 
