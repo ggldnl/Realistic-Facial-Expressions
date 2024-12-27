@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
 from typing import Tuple, Optional, Dict, Any
-
 from src.models.mlp.clip import CLIP
 from src.utils.mesh_utils import tensor_to_mesh
 from src.utils.renderer import Renderer
@@ -94,10 +93,10 @@ class NeuralStyleField(pl.LightningModule):
             clamp: Optional[str] = 'tanh',
             normclamp: Optional[str] = 'tanh',
             n_iter: int = 6000,
-            input_dim: int = 3, #todo check
+            input_dim: int = 3,  #todo check
             progressive_encoding: bool = True,
             exclude: int = 0,
-            learning_rate: float = 1e-3,#todo check
+            learning_rate: float = 1e-3,  #todo check
             weight_decay: float = 0.0,
             lr_decay: float = 1.0,
             decay_step: int = 100
@@ -190,6 +189,7 @@ class NeuralStyleTransfer(pl.LightningModule):
                  learning_rate: float = 1e-3,
                  lr_decay: float = 0.9,
                  decay_step: int = 1000,
+                 batch_size: int = 4,
                  res: int = 224):
         super().__init__()
         self.save_hyperparameters()
@@ -223,64 +223,79 @@ class NeuralStyleTransfer(pl.LightningModule):
         self.learning_rate = learning_rate
         self.lr_decay = lr_decay
         self.decay_step = decay_step
+        self.batch_size = batch_size
 
     def forward(self, vertices):
         return self.style_field(vertices)
 
-    def training_step(self, batch, batch_idx):
-        vertices = batch['neutral_vertices']
-        target_vertices = batch['expression_vertices']
-        batch_size = vertices.shape[0]
+    def common_step(self, batch, batch_idx):
+        for idx in range(self.batch_size):
+            vertices = batch['neutral_graph'][idx].x
 
-        # Get style field output
-        displacements = self(vertices)
+            # Get style field output
+            displacements = self(vertices)
 
-        # Apply displacements
-        deformed_vertices = vertices + displacements
+            # Apply displacements
+            deformed_vertices = vertices + displacements
 
-        computed_rendered_images = []
-        target_rendered_images = []
+            computed_mesh = tensor_to_mesh(vertices=deformed_vertices,
+                                           faces=batch['neutral_graph'][idx].faces, )
 
-        for idx in range(batch_size):
-            computed_model = tensor_to_mesh(vertices=deformed_vertices[idx],
-                                            faces=batch['expression_faces'][idx])
-
-            target_model = tensor_to_mesh(vertices=target_vertices[idx],
-                                          faces=batch['expression_faces'][idx])
-
-
+            target_mesh = tensor_to_mesh(vertices=batch['expression_graph'][idx].x,
+                                         faces=batch['expression_graph'][idx].faces, )
 
             # Render views
-            computed_rendered_images.append(self.renderer.multiple_render(
-                model_in=computed_model,
+            computed_rendered_images = self.renderer.render_viewpoints(
+                model_in=computed_mesh,
                 num_views=8,
                 radius=600,
                 elevation=0,
                 scale=1.0,
                 rend_size=(1024, 1024),
-                from_path=False
-            ))
-            target_rendered_images.append(self.renderer.multiple_render(
-                model_in=target_vertices,
+            )
+            target_rendered_images = self.renderer.render_viewpoints(
+                model_in=target_mesh,
                 num_views=8,
                 radius=600,
                 elevation=0,
                 scale=1.0,
                 rend_size=(1024, 1024),
-                from_path=False
-            ))
+            )
 
-        # Calculate CLIP loss with augmentations
-        loss = 0
-        for idx, rendered_image in enumerate(computed_rendered_images):
-            encoded_renders = self.clip.encode_augmented_renders(rendered_image)
-            loss -= torch.mean(torch.cosine_similarity(
-                rendered_image,
-                target_rendered_images[idx]
-                #self.target_features.expand(batch_size, -1)
-            ))
+            # Calculate CLIP loss with augmentations
+            loss = 0
+            for idx, rendered_image in enumerate(computed_rendered_images):
+                encoded_renders = self.clip.encode_augmented_renders(rendered_image)
+                loss -= torch.mean(torch.cosine_similarity(
+                    rendered_image,
+                    target_rendered_images[idx]
+                    # self.target_features.expand(batch_size, -1)
+                ))
+
+            return loss
+
+    def training_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx)
 
         self.log('train_loss', loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx)
+        self.log("val_loss",
+                 loss,
+                 prog_bar=True,
+                 logger=True,
+                 batch_size=self.batch_size)
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx)
+        self.log("test_loss",
+                 loss,
+                 prog_bar=True,
+                 logger=True,
+                 batch_size=self.batch_size)
         return loss
 
     def configure_optimizers(self):

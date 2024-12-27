@@ -25,6 +25,10 @@ TRAIN_SPLIT = 0.8
 TEST_SPLIT = 0.1
 # 0.1 percent will be devoted to the validation set
 
+# mesh simplification
+MESH_SIMPLIFY = True
+MESH_DROP_PERCENTAGE = 0.85
+
 # ----------------------------------- Model ---------------------------------- #
 # LAYERS_IN = [26404, 10000, 5000, 2500]  # 26404 being the size of the meshes in our dataset
 # LATENT_SIZE = 512
@@ -36,6 +40,6 @@ TEXT_EMBED_SIZE = 3
 
 # --------------------------------- Training --------------------------------- #
 
-BATCH_SIZE = 16
+BATCH_SIZE = 4
 EPOCHS = 50
 PATIENCE = 20

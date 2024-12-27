@@ -105,14 +105,14 @@ class Model(pl.LightningModule):
         pred = self(neutral_vertices, descriptions)
 
         loss = self.loss_fn(pred, target.x)
-        return loss
+        return pred, loss
 
-    def compute_metrics(self, batch):
+    def compute_metrics(self, pred, batch):
         computed_rendered_images = []
         target_rendered_images = []
 
         for idx in range(self.batch_size):
-            computed_mesh = tensor_to_mesh(vertices=batch['neutral_graph'][idx].x,
+            computed_mesh = tensor_to_mesh(vertices=pred[idx],
                                             faces=batch['neutral_graph'][idx].faces,)
 
             target_mesh = tensor_to_mesh(vertices=batch['expression_graph'][idx].x,
@@ -147,8 +147,8 @@ class Model(pl.LightningModule):
 
 
     def training_step(self, batch, batch_idx):
-        loss = self.common_step(batch)
-        self.compute_metrics(batch)
+        pred, loss = self.common_step(batch)
+        self.compute_metrics(pred, batch)
         self.log("train_loss",
                  loss,
                  prog_bar=True,
@@ -157,8 +157,8 @@ class Model(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss = self.common_step(batch)
-        self.compute_metrics(batch)
+        pred, loss = self.common_step(batch)
+        self.compute_metrics(pred, batch)
         self.log("val_loss",
                  loss,
                  prog_bar=True,
@@ -167,7 +167,7 @@ class Model(pl.LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        loss = self.common_step(batch)
+        pred, loss = self.common_step(batch)
         self.log("test_loss",
                  loss,
                  prog_bar=True,

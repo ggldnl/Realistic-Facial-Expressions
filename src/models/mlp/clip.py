@@ -6,6 +6,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
 
+
 class CLIP(pl.LightningModule):
     """Wrapper for CLIP model and related transforms using Hugging Face implementation"""
 
@@ -19,6 +20,13 @@ class CLIP(pl.LightningModule):
         # Load CLIP model and processor from Hugging Face
         self.model = CLIPModel.from_pretrained(model_name)
         self.processor = CLIPProcessor.from_pretrained(model_name)
+
+        # Freeze all parameters
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        # Set model to eval mode
+        self.model.eval()
 
         # CLIP normalization values from original implementation
         self.normalizer = transforms.Normalize(
