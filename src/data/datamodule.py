@@ -113,7 +113,6 @@ class FacescapeDataModule(pl.LightningDataModule):
         mesh_face_count (int, optional): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
         aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
     """
-
     def __init__(self,
                  resource_url,          # URL that identifies where to download the data from
                  download_source,       # The URL can point to google drive, author's website and so on
@@ -337,10 +336,14 @@ if __name__ == '__main__':
 
     # Get a datamodule to iterate
     train_loader = datamodule.train_dataloader()
-    print(f'Number of batches in the train dataset: {len(train_loader)}')
+    print(f'\nNumber of batches in the train dataset: {len(train_loader)}')
 
-    for elem in train_loader:
-        print(f'Number of samples in the train dataset: {len(list(elem.values())[0])}')
-        for key, value in elem.items():
+    for batch in train_loader:
+
+        print(f'\nNumber of samples in the first batch: {len(list(batch.values())[0])}')
+
+        print(f'\nBatch consist of:')
+        for key, value in batch.items():
             print(f'{key}: {value}')
+
         break
