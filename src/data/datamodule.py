@@ -10,7 +10,6 @@ import torch
 
 from src.utils.mesh_utils import faces_to_edges
 from src.utils.mesh_utils import read_dict
-
 from src.utils.file_utils import download_resource
 from src.utils.file_utils import download_google_drive
 from src.utils.file_utils import extract_zip

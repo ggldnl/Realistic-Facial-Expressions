@@ -66,7 +66,8 @@ class Model(pl.LightningModule):
     def __init__(self,
                  latent_size,
                  input_dim=3,
-                 lr=1e-3
+                 lr=1e-3,
+                 batch_size=4,
                  ):
 
         super().__init__()
@@ -74,6 +75,7 @@ class Model(pl.LightningModule):
         self.latent_size = latent_size
         self.input_dim = input_dim
         self.lr = lr
+        self.batch_size = batch_size
 
         # Define the architecture
         self.gcn1 = GCNConv(self.input_dim, self.latent_size)
@@ -90,11 +92,10 @@ class Model(pl.LightningModule):
         # Text conditioning
         text_condition = self.text_encoder(descriptions).unsqueeze(1)
 
-        # x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
-        # x = x + text_condition
-        # x = torch.relu(x)
-        # x = self.gcn2(x, neutral_graph.edge_index)
-        x = neutral_graph.x
+        x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
+        x = x + text_condition
+        x = torch.relu(x)
+        x = self.gcn2(x, neutral_graph.edge_index)
 
         return x
 
@@ -156,7 +157,8 @@ class Model(pl.LightningModule):
         self.log("train_loss",
                  loss,
                  prog_bar=True,
-                 logger=True)
+                 logger=True,
+                 batch_size=self.batch_size)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -165,7 +167,8 @@ class Model(pl.LightningModule):
         self.log("val_loss",
                  loss,
                  prog_bar=True,
-                 logger=True)
+                 logger=True,
+                 batch_size=self.batch_size)
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -173,7 +176,8 @@ class Model(pl.LightningModule):
         self.log("test_loss",
                  loss,
                  prog_bar=True,
-                 logger=True)
+                 logger=True,
+                 batch_size=self.batch_size)
         return loss
 
     def configure_optimizers(self):

@@ -30,7 +30,8 @@ if __name__ == '__main__':
     # Create the model
     model = Model(
         config.LATENT_SIZE,
-        lr=config.LEARNING_RATE
+        lr=config.LEARNING_RATE,
+        batch_size=config.BATCH_SIZE
     )
 
     render_callback = RenderCallback(
