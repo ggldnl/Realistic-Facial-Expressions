@@ -39,7 +39,7 @@ LATENT_SIZE = 512
 
 # --------------------------------- Training --------------------------------- #
 
-BATCH_SIZE = 16
+BATCH_SIZE = 2
 EPOCHS = 50
 PATIENCE = 20
 LEARNING_RATE = 1e-3

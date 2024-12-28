@@ -1,15 +1,13 @@
 from transformers import DistilBertModel, DistilBertTokenizer
 from torch_geometric.nn import GCNConv
+from torch_geometric.data import Data
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
 
 from src.utils.renderer import Renderer
 
-from src.utils.loss import chamfer_distance
-from src.utils.loss import mse_loss
-
-from src.utils.mesh_utils import tensor_to_mesh, visualize_mesh, iterate_batch
+from src.utils.loss import mesh_custom_loss
 
 
 class TextEncoder(pl.LightningModule):
@@ -85,7 +83,7 @@ class Model(pl.LightningModule):
         self.renderer = Renderer()
 
         # Define the loss function
-        self.loss_fn = chamfer_distance
+        self.loss_fn = mesh_custom_loss
 
     def forward(self, neutral_graph, descriptions):
 
@@ -101,14 +99,18 @@ class Model(pl.LightningModule):
 
     def common_step(self, batch):
 
-        neutral_vertices = batch['neutral_graph']
-        target = batch['expression_graph']
+        neutral_graph = batch['neutral_graph']
+        target_graph = batch['expression_graph']
         descriptions = batch['description']
 
-        pred = self(neutral_vertices, descriptions)
+        displaced_vertices = self(neutral_graph, descriptions)
 
-        loss = self.loss_fn(pred, target.x)
-        return pred, loss
+        # Reconstruct the graph by adding the same vertex index as before
+        pred_graph = Data(x=displaced_vertices, edge_index=neutral_graph.edge_index)
+
+        loss = self.loss_fn(pred_graph, target_graph, neutral_graph)  # pred batch graph, target batch graph, neutral batch graph
+
+        return pred_graph, loss
 
     def compute_metrics(self, pred, batch):
         computed_rendered_images = []
