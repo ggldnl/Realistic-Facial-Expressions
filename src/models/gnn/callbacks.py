@@ -55,6 +55,7 @@ class RenderCallback(Callback):
             print(f'\nPerforming inference on neutral mesh {self.in_mesh} with prompt: \'{self.prompt}\'')
 
             neutral_mesh = read_graph(self.in_mesh)
+            neutral_mesh = neutral_mesh.to(pl_module.device)
             x = self.model(neutral_mesh, [self.prompt])
             pred_mesh = tensor_to_mesh(x.squeeze(0),
                                        neutral_mesh.faces)  # Batch containing a single mesh -> squeeze batch
