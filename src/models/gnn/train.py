@@ -35,11 +35,11 @@ if __name__ == '__main__':
     )
 
     render_callback = RenderCallback(
-        n_epochs=10,
+        n_epochs=config.RENDER_INTERVAL,
         model=model,
         in_mesh=config.DATA_DIR / '100/models_reg/1_neutral.obj',
         out_dir=config.RENDER_DIR,
-        prompt='smile'
+        prompt=config.RENDER_PROMPT
     )
 
     trainer = pl.Trainer(

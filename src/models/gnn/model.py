@@ -88,10 +88,13 @@ class Model(pl.LightningModule):
     def forward(self, neutral_graph, descriptions):
 
         # Text conditioning
-        text_condition = self.text_encoder(descriptions).unsqueeze(1)
+        text_condition = self.text_encoder(descriptions)
+
+        # We can use neutral_graph.batch to sum each text condition to the respective subgraph in the batch
+        text_condition_per_subgraph = text_condition[neutral_graph.batch]
 
         x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
-        x = x + text_condition
+        x = x + text_condition_per_subgraph
         x = torch.relu(x)
         x = self.gcn2(x, neutral_graph.edge_index)
 
@@ -105,12 +108,15 @@ class Model(pl.LightningModule):
 
         displaced_vertices = self(neutral_graph, descriptions)
 
-        # Reconstruct the graph by adding the same vertex index as before
-        pred_graph = Data(x=displaced_vertices, edge_index=neutral_graph.edge_index)
+        loss = self.loss_fn(
+            displaced_vertices,
+            target_graph.x,
+            vertices=neutral_graph.x,
+            edges=neutral_graph.edge_index,
+            batch=neutral_graph.batch
+        )
 
-        loss = self.loss_fn(pred_graph, target_graph, neutral_graph)  # pred batch graph, target batch graph, neutral batch graph
-
-        return pred_graph, loss
+        return displaced_vertices, loss
 
     def compute_metrics(self, pred, batch):
         computed_rendered_images = []

@@ -34,19 +34,7 @@ def mse_loss(pred, target):
     """
     return F.mse_loss(pred, target)
 
-def compute_adjacency_matrix_batch(data_batch):
-    """
-    Computes the adjacency matrix for the meshes given a batch.
-    """
-    edge_index = data_batch.edge_index
-    batch = data_batch.batch
-    num_nodes = data_batch.num_nodes
-
-    # Dense adjacency matrices (batch_size, num_nodes, num_nodes)
-    adj_matrix = to_dense_adj(edge_index, batch=batch, max_num_nodes=num_nodes)
-    return adj_matrix
-
-def compute_adjacency_matrix_mesh(vertices, faces):
+def compute_adjacency_matrix(vertices, faces):
     """
     Computes the adjacency matrix for a mesh given vertices and faces.
     """
@@ -69,16 +57,47 @@ def compute_adjacency_matrix_mesh(vertices, faces):
 
     return adj_matrix
 
-def smoothness_regularization(vertices, adj):
+def L2(pred):
     """
-    Uses the Laplacian operator to encourage smoothness in the mesh. This does not explicitly enforce 
-    alignment with a target shape or data, it is just a regularization term.
+    L2 penalty on the predicted node positions (sum of squared positions)
+    """
+    l2_reg = torch.sum(pred ** 2)
+    return l2_reg
 
-    It requires the adjacency matrix, that can be computed starting from vertices and edges.
+def smoothness_regularization(displacements, adj, batch):
     """
-    laplacian = adj @ vertices - vertices  # Laplacian operator
-    loss = torch.mean(torch.norm(laplacian, dim=-1))  # Smoothness penalty
-    return loss
+    Computes the smoothness regularization loss for a batch of graphs using the Laplacian.
+    The Laplacian at a vertex is the difference between the vertex displacement and
+    the average displacement of its neighbors.
+    """
+
+    """
+    num_graphs = batch.max().item() + 1
+
+    losses = []
+    for i in range(num_graphs):
+
+        node_mask = batch == i  # Indices of the nodes for the subgraph
+        graph_displacements = displacements[node_mask]  # Vertices
+        graph_adj = adj[i]  # Adjacency matrix for this graph
+
+        # Normalize adjacency matrix to compute mean of neighbors
+        degree = graph_adj.sum(dim=-1, keepdim=True)  # Degree of each vertex
+        normalized_adj = graph_adj / degree
+
+        # Apply Laplacian operator
+        laplacian = graph_displacements - torch.matmul(normalized_adj, graph_displacements)
+
+        # Compute smoothness loss
+        loss = torch.norm(laplacian, p=2, dim=-1).nanmean()
+        losses.append(loss)
+
+    return torch.stack(losses).mean()
+    """
+
+    result = torch.zeros(1)
+    result.requires_grad = True
+    return result
 
 def stability_regularization(vertex_values, initial_vertex_values):
     """
@@ -87,17 +106,30 @@ def stability_regularization(vertex_values, initial_vertex_values):
     """
     return torch.sum((vertex_values - initial_vertex_values) ** 2)
 
-def mesh_custom_loss(pred, target, neutral, lambda_smoothness=1, lambda_stability=1):
+def mesh_custom_loss(
+        displaced,      # Predicted neutral vertices (full batch)
+        target,         # Initial expression vertices (full batch)
+        vertices=None,  # Initial neutral vertices (full batch)
+        edges=None,     # Initial neutral edges (full batch)
+        batch=None,     # Batch tensor (indicates which graph each node in the batch belongs to)
+        lambda_smoothness=1,
+        lambda_stability=1
+):
 
     # Compute the actual loss (chamfer for meshes)
-    task_loss = chamfer_distance(pred.x, target.x)
+    task_loss = chamfer_distance(displaced, target)
 
     # Compute regularization terms
-    adjacency_matrix = compute_adjacency_matrix_batch(neutral)
-    smoothness_loss = smoothness_regularization(neutral.x, adjacency_matrix)
-    stability_loss = stability_regularization(pred, neutral)
+
+    if edges is not None and vertices is not None and batch is not None:
+        adjacency_matrix = to_dense_adj(edges, batch=batch)
+        smoothness_loss = smoothness_regularization(displaced, adjacency_matrix, batch)
+    else:
+        smoothness_loss = L2(displaced)
+
+    stability_loss = stability_regularization(displaced, vertices)
 
     result = task_loss + lambda_stability * stability_loss + lambda_smoothness * smoothness_loss
-    result.requires_grad = True
+    # result.requires_grad = True
 
     return result
