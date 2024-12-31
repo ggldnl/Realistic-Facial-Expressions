@@ -11,7 +11,8 @@ def read_mesh(
         loader='trimesh',
         mesh_drop_percent=None,
         mesh_face_count=None,
-        aggression=None
+        aggression=None,
+        normalize=False
 ):
     """
     Reads a mesh file and returns its processed data.
@@ -65,6 +66,9 @@ def read_mesh(
                     face_count=mesh_face_count,
                     aggression=aggression
                 )
+
+                if normalize:
+                    mesh.vertices = mesh.vertices / mesh.vertices.max()
 
 
         case _:
