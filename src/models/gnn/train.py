@@ -42,6 +42,14 @@ if __name__ == '__main__':
         prompt=config.RENDER_PROMPT
     )
 
+    early_stop_callback = EarlyStopping(
+        monitor='val_loss',  # Metric to monitor
+        min_delta=0.001,  # Minimum change to qualify as an improvement
+        patience=config.PATIENCE,  # Number of epochs with no improvement after which training will be stopped
+        verbose=True,  # Whether to print logs to stdout
+        mode='min'  # 'min' mode means training will stop when the quantity monitored stops decreasing
+    )
+
     trainer = pl.Trainer(
         max_epochs=config.EPOCHS,
         logger=logger,
@@ -49,9 +57,7 @@ if __name__ == '__main__':
         # gradient_clip_val=1.0,
         callbacks=[
             TQDMProgressBar(refresh_rate=20),
-            EarlyStopping(monitor='val_loss', patience=config.PATIENCE, mode='min'),
-
-            # Custom render callback
+            early_stop_callback,
             render_callback
         ]
     )

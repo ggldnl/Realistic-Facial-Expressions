@@ -64,40 +64,49 @@ def L2(pred):
     l2_reg = torch.sum(pred ** 2)
     return l2_reg
 
+
 def smoothness_regularization(displacements, adj, batch):
     """
     Computes the smoothness regularization loss for a batch of graphs using the Laplacian.
     The Laplacian at a vertex is the difference between the vertex displacement and
     the average displacement of its neighbors.
-    """
-
+    Args:
+        displacements: Tensor of shape [num_total_nodes, 3] containing vertex displacements
+        adj: Tensor of shape [num_graphs, max_nodes, max_nodes] containing adjacency matrices
+        batch: Tensor of shape [num_total_nodes] indicating which graph each node belongs to
+    Returns:
+        Scalar tensor containing the mean smoothness loss across all graphs
     """
     num_graphs = batch.max().item() + 1
-
     losses = []
+
     for i in range(num_graphs):
+        # Get mask for current graph's nodes
+        node_mask = batch == i
 
-        node_mask = batch == i  # Indices of the nodes for the subgraph
-        graph_displacements = displacements[node_mask]  # Vertices
-        graph_adj = adj[i]  # Adjacency matrix for this graph
+        # Get displacements for current graph
+        graph_displacements = displacements[node_mask]  # [num_nodes_in_graph, 3]
 
-        # Normalize adjacency matrix to compute mean of neighbors
-        degree = graph_adj.sum(dim=-1, keepdim=True)  # Degree of each vertex
-        normalized_adj = graph_adj / degree
+        # Get adjacency matrix for current graph
+        graph_adj = adj[i]  # [max_nodes, max_nodes]
 
-        # Apply Laplacian operator
-        laplacian = graph_displacements - torch.matmul(normalized_adj, graph_displacements)
+        # Trim adjacency matrix to match actual number of nodes in this graph
+        num_nodes = graph_displacements.shape[0]
+        graph_adj = graph_adj[:num_nodes, :num_nodes]  # [num_nodes, num_nodes]
 
-        # Compute smoothness loss
-        loss = torch.norm(laplacian, p=2, dim=-1).nanmean()
+        # Normalize adjacency matrix
+        degree = graph_adj.sum(dim=-1, keepdim=True).clamp(min=1)  # [num_nodes, 1]
+        normalized_adj = graph_adj / degree  # [num_nodes, num_nodes]
+
+        # Compute Laplacian: L = x - Ax (where A is normalized adjacency)
+        neighbor_mean = torch.matmul(normalized_adj, graph_displacements)  # [num_nodes, 3]
+        laplacian = graph_displacements - neighbor_mean  # [num_nodes, 3]
+
+        # Compute L2 norm of Laplacian per vertex and take mean
+        loss = torch.norm(laplacian, p=2, dim=-1).mean()  # scalar
         losses.append(loss)
 
     return torch.stack(losses).mean()
-    """
-
-    result = torch.zeros(1)
-    result.requires_grad = True
-    return result
 
 def stability_regularization(vertex_values, initial_vertex_values):
     """
