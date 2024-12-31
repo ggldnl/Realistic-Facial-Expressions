@@ -113,7 +113,7 @@ def stability_regularization(vertex_values, initial_vertex_values):
     Computes the penalty for large changes in vertex values. It requires the initial vertex values.
     It makes the vertices less likely to have big changes.
     """
-    return torch.sum((vertex_values - initial_vertex_values) ** 2)
+    return torch.mean(torch.sqrt((vertex_values**2 + initial_vertex_values**2)))
 
 def mesh_custom_loss(
         displaced,      # Predicted neutral vertices (full batch)
