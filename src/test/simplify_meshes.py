@@ -52,4 +52,4 @@ if __name__ == '__main__':
     destination_dir = Path(args.destination)
 
     # Run the processing
-    process_dir(source_dir, destination_dir, percent=args.percent)
+    process_dir(source_dir, destination_dir, percent=args.percent, normalize=args.normalize)
