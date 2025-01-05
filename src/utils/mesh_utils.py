@@ -23,7 +23,6 @@ def read_mesh(
         mesh_face_count=None,
         aggression=None,
         normalize=False,
-        device="cuda"
 ):
     """
     Reads a mesh file using either PyTorch3D or trimesh loaders.
@@ -35,7 +34,6 @@ def read_mesh(
         mesh_face_count (int): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
         aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
         normalize (bool): Whether to normalize vertex coordinates
-        device: Device to place tensors on
 
     Returns:
         For pytorch3d loader: PyTorch3D Meshes object
@@ -61,14 +59,6 @@ def read_mesh(
             else:  # .ply
                 verts, faces = load_ply(obj_path)
 
-            # Transfer to device
-            verts = verts.to(device)
-            faces = faces.to(device)
-
-            # Create a white texture for each vertex
-            verts_rgb = torch.ones_like(verts)[None]  # (1, V, 3)
-            textures = TexturesVertex(verts_features=verts_rgb)
-
             # Normalize if requested
             if normalize:
                 center = verts.mean(0)
@@ -78,8 +68,7 @@ def read_mesh(
             # Create Meshes object
             mesh = Meshes(
                 verts=[verts],
-                faces=[faces],
-                textures=textures
+                faces=[faces]
             )
             return mesh
 

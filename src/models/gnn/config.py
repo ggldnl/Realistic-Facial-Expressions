@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
 
 # Where to check or put the downloaded data
-DATA_DIR = Path(ROOT_DIR, 'datasets/facescape_simplified')
+DATA_DIR = Path(ROOT_DIR, 'datasets/simplified_meshes')
 
 # Model folder
 MODEL_DIR = Path(ROOT_DIR, 'src/models/gnn')
