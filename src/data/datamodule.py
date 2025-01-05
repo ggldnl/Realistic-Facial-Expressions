@@ -1,13 +1,10 @@
 from pathlib import Path
-import torch
-from torch.utils.data import Dataset, default_collate
+from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from torch.utils.data import random_split
 import pytorch_lightning as pl
-from pytorch3d.structures import Meshes
-from pytorch3d.renderer import TexturesVertex
-import glob
 from typing import Optional, Literal
+
 from src.utils.mesh_utils import read_mesh
 from src.utils.file_utils import download_resource
 from src.utils.file_utils import download_google_drive
@@ -23,8 +20,8 @@ def collate_meshes(batch):
     descriptions = [item["description"] for item in batch]
 
     return {
-        "neutral_mesh": neutral_graphs,
-        "expression_mesh": expression_graphs,
+        "neutral_graph": neutral_graphs,
+        "expression_graph": expression_graphs,
         "description": descriptions
     }
 
@@ -131,7 +128,7 @@ class FacescapeDataModule(pl.LightningDataModule):
             aggression: Optional[int] = None,
             loader: Literal['pytorch3d', 'trimesh'] = 'pytorch3d',
             normalize: bool = False,
-            custom_collate=default_collate
+            custom_collate=collate_meshes
     ):
         """
         Args:
@@ -337,8 +334,7 @@ if __name__ == '__main__':
         data_dir=config.DATA_DIR,
         batch_size=config.BATCH_SIZE,
         download=config.DOWNLOAD,
-        text_generation=DEFAULT_TEXT_GENERATION,
-        custom_collate=collate_meshes
+        text_generation=DEFAULT_TEXT_GENERATION
     )
 
     datamodule.prepare_data()
