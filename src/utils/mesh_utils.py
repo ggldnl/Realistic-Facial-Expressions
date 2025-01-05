@@ -1,35 +1,49 @@
-from torch_geometric.data import Data
 from pathlib import Path
-import pyvista as pv
+import torch
 import numpy as np
 import trimesh
-import torch
+from pytorch3d.io import load_obj, load_ply
+from pytorch3d.structures import Meshes
+from pytorch3d.renderer import (
+    PointLights,
+    RasterizationSettings,
+    MeshRenderer,
+    MeshRasterizer,
+    SoftPhongShader,
+    TexturesVertex,
+    FoVPerspectiveCameras,
+    look_at_view_transform
+)
 
 
 def read_mesh(
         obj_path,
-        loader='trimesh',
+        loader='pytorch3d',
         mesh_drop_percent=None,
         mesh_face_count=None,
         aggression=None,
-        normalize=False
+        normalize=False,
+        device="cuda"
 ):
     """
-    Reads a mesh file and returns its processed data.
+    Reads a mesh file using either PyTorch3D or trimesh loaders.
 
     Args:
         obj_path (str or Path): Path to the mesh file
-        loader (str): Mesh loader to use (for now, only 'trimesh' is supported)
+        loader (str): Mesh loader to use ('pytorch3d' or 'trimesh')
         mesh_drop_percent (float): Percentage of faces to drop (between 0.0 and 1.0)
-        mesh_face_count (int, optional): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
+        mesh_face_count (int): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
         aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
+        normalize (bool): Whether to normalize vertex coordinates
+        device: Device to place tensors on
 
     Returns:
-        dict: Dictionary containing mesh data (vertices, faces, normals)
+        For pytorch3d loader: PyTorch3D Meshes object
+        For trimesh loader: trimesh.Trimesh object
 
     Raises:
-        NotImplementedError: If loader not present
-        ValueError: If file extension is not supported or invalid parameters
+        NotImplementedError: If loader not supported
+        ValueError: If file extension not supported or invalid parameters
     """
     if isinstance(obj_path, str):
         obj_path = Path(obj_path)
@@ -39,27 +53,58 @@ def read_mesh(
         raise ValueError(f"Unsupported file extension for {obj_path}.")
 
     match loader:
+        case 'pytorch3d':
+            # Load using appropriate PyTorch3D loader based on extension
+            if obj_path.suffix == '.obj':
+                verts, faces_idx, _ = load_obj(obj_path)
+                faces = faces_idx.verts_idx
+            else:  # .ply
+                verts, faces = load_ply(obj_path)
+
+            # Transfer to device
+            verts = verts.to(device)
+            faces = faces.to(device)
+
+            # Create a white texture for each vertex
+            verts_rgb = torch.ones_like(verts)[None]  # (1, V, 3)
+            textures = TexturesVertex(verts_features=verts_rgb)
+
+            # Normalize if requested
+            if normalize:
+                center = verts.mean(0)
+                scale = max((verts - center).abs().max(0)[0])
+                verts = (verts - center) / scale
+
+            # Create Meshes object
+            mesh = Meshes(
+                verts=[verts],
+                faces=[faces],
+                textures=textures
+            )
+            return mesh
+
         case 'trimesh':
             # Load the mesh using trimesh
             mesh = trimesh.load_mesh(obj_path, process=True)
 
             # Simplify the mesh if mesh_drop_percent or mesh_face_count are provided
             if mesh_drop_percent or mesh_face_count:
-
                 # Validate mesh_face_count
                 if mesh_face_count is not None:
                     if mesh_face_count < 4:
-                        raise ValueError(f"Target face count ({mesh_face_count}) too low. We can have a minimum of 4 faces for the mesh to be watertight.")
+                        raise ValueError(
+                            f"Target face count ({mesh_face_count}) too low. Minimum is 4 faces for watertight mesh.")
                     if mesh_face_count > len(mesh.faces):
-                        raise ValueError(f"Target face count ({mesh_face_count}) exceeds original mesh face count ({len(mesh.faces)}).")
+                        raise ValueError(
+                            f"Target face count ({mesh_face_count}) exceeds original count ({len(mesh.faces)}).")
 
-                # Validate percentage if mesh_face_count is not provided
+                # Validate percentage if mesh_face_count not provided
                 else:
                     if mesh_drop_percent and not 0 < mesh_drop_percent <= 1:
-                        raise ValueError("percent must be between 0.0 and 1.0")
+                        raise ValueError("mesh_drop_percent must be between 0.0 and 1.0")
 
                 if aggression and not 0 <= aggression <= 10:
-                    raise ValueError("The aggression parameter must be an integer in range [0, 10]")
+                    raise ValueError("aggression must be integer in range [0, 10]")
 
                 mesh = mesh.simplify_quadric_decimation(
                     percent=mesh_drop_percent,
@@ -67,126 +112,14 @@ def read_mesh(
                     aggression=aggression
                 )
 
-                if normalize:
-                    mesh.vertices = mesh.vertices / mesh.vertices.max()
+            # Normalize if requested
+            if normalize:
+                mesh.vertices = mesh.vertices / mesh.vertices.max()
 
+            return mesh
 
         case _:
-            raise NotImplementedError(f"Loader '{loader}' is not implemented. Only 'trimesh' is currently supported.")
-
-    return mesh
-
-
-def read_graph(obj_path, **kwargs):
-    """
-    Reads the mesh file and returns a torch_geometric.data.Data graph.
-
-    Args:
-        obj_path (str or pathlib.Path): Path to the mesh.
-
-    Returns:
-        torch_geometric.data.Data: Graph generated from the mesh at obj_path.
-    """
-
-    mesh = read_mesh(obj_path, **kwargs)
-
-    vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
-    faces = torch.tensor(mesh.faces, dtype=torch.long)
-
-    # Convert faces to edges
-    edge_list = faces_to_edges(faces.numpy(force=True))
-    edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
-
-    # Create graph object
-    graph = Data(
-        x=vertices,  # Nodes (vertex features)
-        edge_index=edge_index,  # Edges
-        faces=faces
-    )
-    return graph
-
-
-def read_dict(obj_path, **kwargs):
-    """
-    Reads the mesh file and returns a dictionary containing its data.
-
-    Args:
-        obj_path (str or pathlib.Path): Path to the mesh.
-
-    Returns:
-        dict: Dictionary generated from the mesh at obj_path.
-    """
-
-    mesh = read_mesh(obj_path, **kwargs)
-
-    vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
-    faces = torch.tensor(mesh.faces, dtype=torch.long)
-
-    # Generate normals if available
-    vertex_normals = (torch.tensor(mesh.vertex_normals, dtype=torch.float32)
-                      if mesh.vertex_normals is not None else None)
-    face_normals = None
-
-    return {
-        "vertices": vertices,
-        "faces": faces,
-        "vertex_normals": vertex_normals,
-        "face_normals": face_normals
-    }
-
-
-def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_normals=False):
-    """
-    Visualizes the mesh and its normals using common data from read_mesh.
-    """
-
-    # Extract vertices and faces
-    if isinstance(mesh, dict):
-        vertices = mesh["vertices"].numpy(force=True)
-        faces = mesh["faces"].numpy(force=True).flatten()
-
-        # Check if vertex normals are available
-        vertex_normals = (mesh["vertex_normals"].numpy(force=True)
-                          if mesh["vertex_normals"] is not None else None)
-
-    elif isinstance(mesh, Data):
-        vertices = mesh.x
-        faces = mesh.faces
-
-        # Generate normals if available
-        vertex_normals = None
-
-    else:
-        vertices = mesh.vertices
-        faces = mesh.faces
-
-        # Generate normals if available
-        vertex_normals = mesh.vertex_normals if mesh.vertex_normals is not None else None
-
-    # Convert faces to PyVista format (prefix each face with the number of vertices, 3 for triangles)
-    pv_faces = np.insert(faces.reshape(-1, 3), 0, 3, axis=1)  # PyVista expects this format
-    mesh = pv.PolyData(vertices, pv_faces)
-
-    # Add normals if available
-    if show_normals and vertex_normals is not None:
-        mesh["Normals"] = vertex_normals
-
-    # Add uniform color to all vertices
-    uniform_color = np.tile(color, (vertices.shape[0], 1))
-    mesh.point_data["Color"] = uniform_color
-
-    # Plot the mesh
-    plotter = pv.Plotter()
-    plotter.add_mesh(mesh, scalars="Color", rgb=True, show_edges=False)
-
-    # Optionally add normals
-    if show_normals and vertex_normals is not None:
-        plotter.add_arrows(vertices, vertex_normals, mag=0.1, color="white", label="Normals")
-
-    # Add axes for reference
-    plotter.add_axes()
-    plotter.show()
-
+            raise NotImplementedError(f"Loader '{loader}' not implemented. Use 'pytorch3d' or 'trimesh'.")
 
 def tensor_to_mesh(vertices, faces, vertex_normals=None):
     """
@@ -219,40 +152,164 @@ def tensor_to_mesh(vertices, faces, vertex_normals=None):
     return mesh
 
 
-def faces_to_edges(faces):
+def get_pytorch3d_renderer(
+        image_size: int = 512,
+        dist: float = 1.5,
+        elev: float = 0.0,
+        azim: float = 0.0,
+        device: str = "cuda"
+) -> MeshRenderer:
     """
-    Given the faces of a mesh, create the unique edges.
+    Creates a PyTorch3D renderer with specified parameters.
 
     Args:
-        faces (list of list or tuple, tensor): A list of faces, where each face is
-            represented as a list or tuple of vertex indices (e.g., [v1, v2, v3]).
+        image_size: Size of the rendered image
+        dist: Distance of camera from origin
+        elev: Elevation angle in degrees
+        azim: Azimuth angle in degrees
+        device: Device to place renderer on
 
     Returns:
-        list of tuple: A list of unique edges, where each edge is a tuple of two
-            vertex indices (e.g., (v1, v2)). The vertex indices in each edge are
-            sorted in ascending order.
+        MeshRenderer configured with specified parameters
     """
-    edges = set()
-    for face in faces:
-        edges.add(tuple(sorted([face[0], face[1]])))
-        edges.add(tuple(sorted([face[1], face[2]])))
-        edges.add(tuple(sorted([face[2], face[0]])))
-    return list(edges)
+    # Get camera position based on angles
+    R, T = look_at_view_transform(dist=dist, elev=elev, azim=azim)
+
+    # Initialize perspective camera
+    cameras = FoVPerspectiveCameras(
+        R=R,
+        T=T,
+        device=device,
+        fov=60  # Field of view in degrees
+    )
+
+    # Configure rasterization settings
+    raster_settings = RasterizationSettings(
+        image_size=image_size,
+        blur_radius=0.0,
+        faces_per_pixel=1,
+    )
+
+    # Set up lighting
+    lights = PointLights(
+        device=device,
+        location=[[0.0, 0.0, 2.0]],
+        ambient_color=[[0.7, 0.7, 0.7]],
+        diffuse_color=[[0.3, 0.3, 0.3]],
+        specular_color=[[0.2, 0.2, 0.2]]
+    )
+
+    # Create renderer
+    renderer = MeshRenderer(
+        rasterizer=MeshRasterizer(
+            cameras=cameras,
+            raster_settings=raster_settings
+        ),
+        shader=SoftPhongShader(
+            device=device,
+            cameras=cameras,
+            lights=lights
+        )
+    )
+
+    return renderer
 
 
-def iterate_batch(batch):
+def visualize_mesh(
+        mesh,
+        image_size: int = 512,
+        dist: float = 1.5,
+        elev: float = 0.0,
+        azim: float = 0.0,
+        save_path: str = None,
+        show: bool = True
+) -> np.ndarray:
+    """
+    Visualizes a 3D mesh using either PyTorch3D or Trimesh.
 
-    for idx in range(batch.num_graphs):
-        yield tensor_to_mesh(vertices=batch[idx].x,
-                                       faces=batch[idx].faces)
+    Args:
+        mesh: Either a PyTorch3D Meshes object or a Trimesh object
+        image_size: Size of the output image
+        dist: Distance of camera from origin
+        elev: Elevation angle in degrees
+        azim: Azimuth angle in degrees
+        save_path: Path to save the rendered image (optional)
+        show: Whether to display the image
+
+    Returns:
+        numpy array containing the rendered image
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    match mesh:
+        case Meshes():
+            # Ensure mesh is on correct device
+            mesh = mesh.to(device)
+
+            # Create renderer and render
+            renderer = get_pytorch3d_renderer(image_size, dist, elev, azim, device)
+            images = renderer(mesh)
+            image = images[0, ..., :3].cpu().numpy()
+
+        case trimesh.Trimesh():
+            # Convert to pytorch3d format for rendering
+            verts = torch.tensor(mesh.vertices, device=device, dtype=torch.float32)
+            faces = torch.tensor(mesh.faces, device=device, dtype=torch.int64)
+
+            # Create white vertex colors if none exist
+            if mesh.visual.vertex_colors is None:
+                vertex_colors = torch.ones_like(verts)[None]  # white
+            else:
+                vertex_colors = torch.tensor(
+                    mesh.visual.vertex_colors[:, :3].astype(float) / 255.0,
+                    device=device,
+                    dtype=torch.float32
+                )[None]
+
+            # Create PyTorch3D mesh
+            textures = TexturesVertex(verts_features=vertex_colors)
+            pytorch3d_mesh = Meshes(
+                verts=[verts],
+                faces=[faces],
+                textures=textures
+            )
+
+            # Render
+            renderer = get_pytorch3d_renderer(image_size, dist, elev, azim, device)
+            images = renderer(pytorch3d_mesh)
+            image = images[0, ..., :3].cpu().numpy()
+
+        case _:
+            raise ValueError(f"Unsupported mesh type: {type(mesh)}. Must be either PyTorch3D Meshes or Trimesh object.")
+
+    # Convert to uint8 for display/saving
+    image = (image * 255).astype(np.uint8)
+
+    if save_path:
+        import imageio
+        imageio.imsave(save_path, image)
+
+    if show:
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(10, 10))
+        plt.imshow(image)
+        plt.axis('off')
+        plt.show()
+
+    return image
 
 
-# Test the visualization
-if __name__ == "__main__":
+def compute_face_normals(mesh):
+    """Compute face normals."""
+    verts = mesh.verts_packed()  # (V, 3)
+    faces = mesh.faces_packed()  # (F, 3)
 
-    root_dir = Path(__file__).parent.parent.parent
-    mesh_path = Path(root_dir, 'datasets/facescape/100/models_reg/1_neutral.obj')
+    # Compute edge vectors
+    v0 = verts[faces[:, 0]]  # (F, 3)
+    v1 = verts[faces[:, 1]]  # (F, 3)
+    v2 = verts[faces[:, 2]]  # (F, 3)
 
-    color = torch.tensor([0.0, 0.0, 1.0])
-    mesh_data = read_dict(mesh_path)
-    visualize_mesh(mesh_data, color=color)
+    face_normals = torch.cross(v1 - v0, v2 - v0)
+    face_normals = torch.nn.functional.normalize(face_normals, p=2, dim=1)
+
+    return face_normals
