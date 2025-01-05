@@ -18,18 +18,13 @@ from src.utils.file_utils import remove
 def collate_meshes(batch):
     """Custom collate function for batching meshes together."""
     # Extract components from each mesh
-    verts = [item["verts"] for item in batch]
-    faces = [item["faces"] for item in batch]
+    neutral_graphs = [item["neutral_graph"] for item in batch]
+    expression_graphs = [item["expression_graph"] for item in batch]
     descriptions = [item["description"] for item in batch]
 
-    # Create batched meshes object
-    meshes = Meshes(
-        verts=verts,
-        faces=faces,
-    )
-
     return {
-        "mesh": meshes,
+        "neutral_mesh": neutral_graphs,
+        "expression_mesh": expression_graphs,
         "description": descriptions
     }
 
