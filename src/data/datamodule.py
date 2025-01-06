@@ -3,9 +3,8 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from torch.utils.data import random_split
 import pytorch_lightning as pl
-from typing import Optional, Literal
 
-from src.utils.mesh_utils import read_mesh
+from src.utils.mesh_utils import batch_meshes
 from src.utils.file_utils import download_resource
 from src.utils.file_utils import download_google_drive
 from src.utils.file_utils import extract_zip
@@ -14,14 +13,18 @@ from src.utils.file_utils import remove
 
 def collate_meshes(batch):
     """Custom collate function for batching meshes together."""
-    # Extract components from each mesh
-    neutral_graphs = [item["neutral_graph"] for item in batch]
-    expression_graphs = [item["expression_graph"] for item in batch]
+
+    # Extract paths from each mesh
+    neutral_paths = [item["neutral_path"] for item in batch]
+    expression_paths = [item["expression_path"] for item in batch]
     descriptions = [item["description"] for item in batch]
 
+    neutral_batch = batch_meshes(neutral_paths)
+    expression_batch = batch_meshes(expression_paths)
+
     return {
-        "neutral_graph": neutral_graphs,
-        "expression_graph": expression_graphs,
+        "neutral_graph": neutral_batch,
+        "expression_graph": expression_batch,
         "description": descriptions
     }
 
@@ -29,45 +32,17 @@ def collate_meshes(batch):
 class FacescapeDataset(Dataset):
     """
     A PyTorch Dataset class for handling Facescape data.
-
-    Args:
-        data (list): The dataset.
-        mesh_drop_percent (float): Percentage of faces to drop (between 0.0 and 1.0), used if face_count is None
-        mesh_face_count (int, optional): Target number of faces in simplified mesh, overrides percent if provided
-        aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
     """
 
     def __init__(
             self,
-            data: Path,
-            mesh_drop_percent: float = None,
-            mesh_face_count: Optional[int] = None,
-            aggression: Optional[int] = None,
-            loader: Literal['pytorch3d', 'trimesh'] = 'pytorch3d',
-            normalize: bool = False
+            data: list
     ):
-        """
-        Args:
-            data_dir: Root directory containing mesh files
-            mesh_drop_percent: Percentage of faces to drop (between 0.0 and 1.0)
-            mesh_face_count: Target number of faces in simplified mesh
-            aggression: Simplification aggressiveness (0-10)
-            loader: Mesh loader to use ('pytorch3d' or 'trimesh')
-            normalize: Whether to normalize vertex coordinates
-        """
         self.data = data
-        self.mesh_drop_percent = mesh_drop_percent
-        self.mesh_face_count = mesh_face_count
-        self.aggression = aggression
-        self.loader = loader
-        self.normalize = normalize
 
     def __len__(self):
         """
         Returns the number of items in the dataset.
-
-        Returns:
-            int: The length of the dataset.
         """
         return len(self.data)
 
@@ -76,37 +51,12 @@ class FacescapeDataset(Dataset):
         Retrieves an item from the dataset.
 
         Args:
-            item (int): The index of the desired item.
+            idx (int): The index of the desired item.
 
         Returns:
             dict: A dictionary containing the item data.
         """
-        item = self.data[idx]
-
-        # Load and process mesh
-        neutral_mesh = read_mesh(
-            str(item['neutral_path']),
-            loader=self.loader,
-            mesh_drop_percent=self.mesh_drop_percent,
-            mesh_face_count=self.mesh_face_count,
-            aggression=self.aggression,
-            normalize=self.normalize,
-        )
-
-        expression_mesh = read_mesh(
-            str(item['expression_path']),
-            loader=self.loader,
-            mesh_drop_percent=self.mesh_drop_percent,
-            mesh_face_count=self.mesh_face_count,
-            aggression=self.aggression,
-            normalize=self.normalize,
-        )
-
-        return {
-            'neutral_graph': neutral_mesh,
-            'expression_graph': expression_mesh,
-            'description': item['description']
-        }
+        return self.data[idx]
 
 
 class FacescapeDataModule(pl.LightningDataModule):
@@ -123,10 +73,6 @@ class FacescapeDataModule(pl.LightningDataModule):
             num_workers: int = 4,
             train_split: float = 0.8,
             val_split: float = 0.1,
-            mesh_drop_percent: float = None,
-            mesh_face_count: Optional[int] = None,
-            aggression: Optional[int] = None,
-            loader: Literal['pytorch3d', 'trimesh'] = 'pytorch3d',
             normalize: bool = False,
             custom_collate=collate_meshes
     ):
@@ -141,11 +87,6 @@ class FacescapeDataModule(pl.LightningDataModule):
             num_workers: Number of CPU workers for data loading
             train_split: Fraction of data for training
             val_split: Fraction of data for validation
-            mesh_pattern: Pattern to match mesh files
-            mesh_drop_percent: Percentage of faces to drop
-            mesh_face_count: Target number of faces in simplified mesh
-            aggression: Simplification aggressiveness (0-10)
-            loader: Mesh loader to use ('pytorch3d' or 'trimesh')
             normalize: Whether to normalize vertex coordinates
         """
         super().__init__()
@@ -162,10 +103,6 @@ class FacescapeDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.train_split = train_split
         self.val_split = val_split
-        self.mesh_drop_percent = mesh_drop_percent
-        self.mesh_face_count = mesh_face_count
-        self.aggression = aggression
-        self.loader = loader
         self.normalize = normalize
         self.custom_collate = custom_collate
 
@@ -258,10 +195,6 @@ class FacescapeDataModule(pl.LightningDataModule):
         # Create the dataset with simplification parameters
         full_dataset = FacescapeDataset(
             self.data,
-            mesh_drop_percent=self.mesh_drop_percent,
-            mesh_face_count=self.mesh_face_count,
-            aggression=self.aggression,
-            loader=self.loader,
             normalize=self.normalize
         )
 
@@ -325,8 +258,6 @@ if __name__ == '__main__':
 
     from src.models.gnn import config
     from src.data.text_generation import DEFAULT_TEXT_GENERATION
-
-    from src.utils.mesh_utils import visualize_mesh
 
     datamodule = FacescapeDataModule(
         resource_url=config.RESOURCE_URL,

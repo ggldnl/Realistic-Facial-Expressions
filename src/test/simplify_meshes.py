@@ -39,11 +39,10 @@ if __name__ == '__main__':
 
     # Argument parser setup
     parser = argparse.ArgumentParser(description="Preprocess .obj meshes by simplifying them.")
-    parser.add_argument('-s', '--source', type=str, default=source_dir, help="Path to the source directory containing .obj files.")
-    parser.add_argument('-d', '--destination', type=str, default=destination_dir, help="Path to the destination directory to save simplified meshes.")
-    parser.add_argument('-p', '--percent', type=float, default=percent, help="Percentage to simplify the mesh (default: 0.8).")
-    parser.add_argument('-n', '--normalize', type=bool, default=normalize,
-                        help="Normalize mesh between -1 and 1.")
+    parser.add_argument('-s', '--source', type=str, required=True, help="Path to the source directory containing .obj files.")
+    parser.add_argument('-d', '--destination', type=str, required=True, help="Path to the destination directory to save simplified meshes.")
+    parser.add_argument('-p', '--percent', type=float, default=0.8, help="Percentage to simplify the mesh (default: 0.8).")
+    parser.add_argument('-n', '--normalize', type=bool, default=True, help="Normalize mesh between -1 and 1.")
 
     args = parser.parse_args()
 

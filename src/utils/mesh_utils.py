@@ -3,25 +3,19 @@ import torch
 import numpy as np
 import trimesh
 from pytorch3d.io import load_obj, load_ply
+from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.structures import Meshes
-from pytorch3d.renderer import (
-    PointLights,
-    RasterizationSettings,
-    MeshRenderer,
-    MeshRasterizer,
-    SoftPhongShader,
-    TexturesVertex,
-    FoVPerspectiveCameras,
-    look_at_view_transform
-)
+from pytorch3d.renderer import PointLights
+from pytorch3d.renderer import RasterizationSettings
+from pytorch3d.renderer import MeshRenderer
+from pytorch3d.renderer import MeshRasterizer
+from pytorch3d.renderer import SoftPhongShader
+from pytorch3d.renderer import TexturesVertex
+from pytorch3d.renderer import FoVPerspectiveCameras
 
 
 def read_mesh(
         obj_path,
-        loader='pytorch3d',
-        mesh_drop_percent=None,
-        mesh_face_count=None,
-        aggression=None,
         normalize=False,
 ):
     """
@@ -29,20 +23,15 @@ def read_mesh(
 
     Args:
         obj_path (str or Path): Path to the mesh file
-        loader (str): Mesh loader to use ('pytorch3d' or 'trimesh')
-        mesh_drop_percent (float): Percentage of faces to drop (between 0.0 and 1.0)
-        mesh_face_count (int): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
-        aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
         normalize (bool): Whether to normalize vertex coordinates
 
     Returns:
-        For pytorch3d loader: PyTorch3D Meshes object
-        For trimesh loader: trimesh.Trimesh object
+        PyTorch3D Meshes object
 
     Raises:
-        NotImplementedError: If loader not supported
         ValueError: If file extension not supported or invalid parameters
     """
+
     if isinstance(obj_path, str):
         obj_path = Path(obj_path)
 
@@ -50,65 +39,39 @@ def read_mesh(
     if obj_path.suffix not in ['.obj', '.off', '.ply']:
         raise ValueError(f"Unsupported file extension for {obj_path}.")
 
-    match loader:
-        case 'pytorch3d':
-            # Load using appropriate PyTorch3D loader based on extension
-            if obj_path.suffix == '.obj':
-                verts, faces_idx, _ = load_obj(obj_path)
-                faces = faces_idx.verts_idx
-            else:  # .ply
-                verts, faces = load_ply(obj_path)
+    # Load using appropriate PyTorch3D loader based on extension
+    if obj_path.suffix == '.obj':
+        verts, faces_idx, _ = load_obj(obj_path)
+        faces = faces_idx.verts_idx
+    else:  # .ply
+        verts, faces = load_ply(obj_path)
 
-            # Normalize if requested
-            if normalize:
-                center = verts.mean(0)
-                scale = max((verts - center).abs().max(0)[0])
-                verts = (verts - center) / scale
+    # Normalize if requested
+    if normalize:
+        center = verts.mean(0)
+        scale = max((verts - center).abs().max(0)[0])
+        verts = (verts - center) / scale
 
-            # Create Meshes object
-            mesh = Meshes(
-                verts=[verts],
-                faces=[faces]
-            )
-            return mesh
+    # Create Meshes object
+    mesh = Meshes(
+        verts=[verts],
+        faces=[faces]
+    )
 
-        case 'trimesh':
-            # Load the mesh using trimesh
-            mesh = trimesh.load_mesh(obj_path, process=True)
+    return mesh
 
-            # Simplify the mesh if mesh_drop_percent or mesh_face_count are provided
-            if mesh_drop_percent or mesh_face_count:
-                # Validate mesh_face_count
-                if mesh_face_count is not None:
-                    if mesh_face_count < 4:
-                        raise ValueError(
-                            f"Target face count ({mesh_face_count}) too low. Minimum is 4 faces for watertight mesh.")
-                    if mesh_face_count > len(mesh.faces):
-                        raise ValueError(
-                            f"Target face count ({mesh_face_count}) exceeds original count ({len(mesh.faces)}).")
+def batch_meshes(meshes):
+    """
+    Batch a list of mesh node features into a single tensor.
 
-                # Validate percentage if mesh_face_count not provided
-                else:
-                    if mesh_drop_percent and not 0 < mesh_drop_percent <= 1:
-                        raise ValueError("mesh_drop_percent must be between 0.0 and 1.0")
+    Args:
+        meshes (list of torch.Tensor | list of ): Each tensor has shape (num_nodes, num_features) representing the nodes of a mesh.
 
-                if aggression and not 0 <= aggression <= 10:
-                    raise ValueError("aggression must be integer in range [0, 10]")
-
-                mesh = mesh.simplify_quadric_decimation(
-                    percent=mesh_drop_percent,
-                    face_count=mesh_face_count,
-                    aggression=aggression
-                )
-
-            # Normalize if requested
-            if normalize:
-                mesh.vertices = mesh.vertices / mesh.vertices.max()
-
-            return mesh
-
-        case _:
-            raise NotImplementedError(f"Loader '{loader}' not implemented. Use 'pytorch3d' or 'trimesh'.")
+    Returns:
+        torch.Tensor: A tensor of shape (num_graphs, max_num_nodes, num_features), where `num_graphs` is the number of meshes,
+                      `max_num_nodes` is the maximum number of nodes in any mesh, and `num_features` is the number of features per node.
+    """
+    return load_objs_as_meshes(meshes)
 
 def tensor_to_mesh(vertices, faces, vertex_normals=None):
     """
@@ -203,7 +166,6 @@ def get_pytorch3d_renderer(
 
     return renderer
 
-
 def visualize_mesh(
         mesh,
         image_size: int = 512,
@@ -286,19 +248,3 @@ def visualize_mesh(
         plt.show()
 
     return image
-
-
-def compute_face_normals(mesh):
-    """Compute face normals."""
-    verts = mesh.verts_packed()  # (V, 3)
-    faces = mesh.faces_packed()  # (F, 3)
-
-    # Compute edge vectors
-    v0 = verts[faces[:, 0]]  # (F, 3)
-    v1 = verts[faces[:, 1]]  # (F, 3)
-    v2 = verts[faces[:, 2]]  # (F, 3)
-
-    face_normals = torch.cross(v1 - v0, v2 - v0)
-    face_normals = torch.nn.functional.normalize(face_normals, p=2, dim=1)
-
-    return face_normals

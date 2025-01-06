@@ -1,6 +1,5 @@
 from transformers import DistilBertModel, DistilBertTokenizer
 from torch_geometric.nn import GCNConv
-from torch_geometric.data import Data
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
@@ -94,7 +93,7 @@ class Model(pl.LightningModule):
         text_condition_per_subgraph = text_condition[neutral_graph.batch]
 
         x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
-        x = x + text_condition_per_subgraph
+        # x = x + text_condition_per_subgraph
         x = torch.relu(x)
         x = self.gcn2(x, neutral_graph.edge_index)
 
@@ -119,73 +118,24 @@ class Model(pl.LightningModule):
         return displaced_vertices, loss
 
     def compute_metrics(self, pred, batch):
-        computed_rendered_images = []
-        target_rendered_images = []
-
-        """
-        for idx in range(self.batch_size):
-
-            computed_mesh = tensor_to_mesh(vertices=pred[idx],
-                                            faces=batch['neutral_graph'][idx].faces,)
-
-            target_mesh = tensor_to_mesh(vertices=batch['expression_graph'][idx].x,
-                                          faces=batch['expression_graph'][idx].faces,)
-
-            # Render views
-            computed_rendered_images.append(self.renderer.render_viewpoints(
-                model_in=computed_mesh,
-                num_views=8,
-                radius=600,
-                elevation=0,
-                scale=1.0,
-                rend_size=(1024, 1024),
-                return_images=True
-            ))
-            target_rendered_images.append(self.renderer.render_viewpoints(
-                model_in=target_mesh,
-                num_views=8,
-                radius=600,
-                elevation=0,
-                scale=1.0,
-                rend_size=(1024, 1024),
-                return_images=True
-            ))
-
-            for computed, target in zip(computed_rendered_images, target_rendered_images):
-
-                # Calculate metrics
-                mse_loss = nn.MSELoss()
-                mse = mse_loss(computed, target)
-            """
-
+        # TODO
+        pass
 
     def training_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
         self.compute_metrics(pred, batch)
-        self.log("train_loss",
-                 loss,
-                 prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+        self.log("train_loss", loss, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
         self.compute_metrics(pred, batch)
-        self.log("val_loss",
-                 loss,
-                 prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+        self.log("val_loss", loss, prog_bar=True, logger=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.log("test_loss",
-                 loss,
-                 prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+        self.log("test_loss", loss, prog_bar=True, logger=True)
         return loss
 
     def configure_optimizers(self):
