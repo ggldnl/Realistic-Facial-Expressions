@@ -109,8 +109,7 @@ class Model(pl.LightningModule):
 
         # Get a packed representation of the meshes
         neutral_meshes_vertices_packed = neutral_meshes.verts_packed()
-        neutral_meshes_faces_packed = neutral_meshes.faces_packed()
-        neutral_meshes_edges_packed = self.faces_to_edges(neutral_meshes_faces_packed)
+        neutral_meshes_edges_packed = neutral_meshes.edges_packed()
 
         # Text conditioning
         text_condition = self.text_encoder(descriptions)  # (batch_size, latent_space)

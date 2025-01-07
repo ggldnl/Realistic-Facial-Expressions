@@ -39,7 +39,7 @@ def pack_meshes(batch):
 def custom_loss(pred, target, w_chamfer=1.0, w_edge=1.0, w_normal=1.0, w_laplacian=1.0, n_samples=5000):
 
     # Sample a set of points from the surface of each mesh
-    sample_target = sample_points_from_meshes(target, n_samples)
+    sample_target = sample_points_from_meshes(target, n_samples)  # (batch_size, n_samples, num_features)
     sample_pred = sample_points_from_meshes(pred, n_samples)
 
     # Compute the chamfer loss (this is batched -> expects tensors with shape (num_graphs, max_num_vertices, 3))
