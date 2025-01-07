@@ -3,10 +3,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
 
-from src.utils.mesh_utils import read_graph
-from src.utils.mesh_utils import read_mesh
 from src.utils.mesh_utils import tensor_to_mesh
-from src.utils.mesh_utils import visualize_mesh
 
 
 class RenderCallback(Callback):

@@ -5,8 +5,7 @@ import torch.nn as nn
 import torch
 
 from src.utils.renderer import Renderer
-
-from src.utils.loss import mesh_custom_loss
+from src.models.gnn.loss import custom_loss
 
 
 class TextEncoder(pl.LightningModule):
@@ -82,40 +81,69 @@ class Model(pl.LightningModule):
         self.renderer = Renderer()
 
         # Define the loss function
-        self.loss_fn = mesh_custom_loss
+        self.loss_fn = custom_loss
 
-    def forward(self, neutral_graph, descriptions):
+    @staticmethod
+    def faces_to_edges(faces):
+        """
+        Converts a tensor containing face indices to a tensor containing edge indices.
+        """
+
+        # Convert faces to edges (undirected edges)
+        edges = torch.cat([
+            faces[:, [0, 1]],  # Edge between vertex 0 and 1
+            faces[:, [1, 2]],  # Edge between vertex 1 and 2
+            faces[:, [2, 0]]  # Edge between vertex 2 and 0
+        ], dim=0)
+
+        # Remove duplicate edges (if graph is undirected)
+        edges = torch.cat([edges, edges[:, [1, 0]]], dim=0)  # Add reverse edges for undirected graph
+        edges = torch.unique(edges, dim=0)  # Remove duplicates
+
+        # Transpose edges to match PyTorch Geometric format
+        edge_index = edges.t()  # Shape: [2, num_edges]
+
+        return edge_index
+
+    def forward(self, neutral_meshes, descriptions):
+
+        # Get a packed representation of the meshes
+        neutral_meshes_vertices_packed = neutral_meshes.verts_packed()
+        neutral_meshes_faces_packed = neutral_meshes.faces_packed()
+        neutral_meshes_edges_packed = self.faces_to_edges(neutral_meshes_faces_packed)
 
         # Text conditioning
-        text_condition = self.text_encoder(descriptions)
+        text_condition = self.text_encoder(descriptions)  # (batch_size, latent_space)
 
         # We can use neutral_graph.batch to sum each text condition to the respective subgraph in the batch
-        text_condition_per_subgraph = text_condition[neutral_graph.batch]
+        mesh_idx_per_vertex = neutral_meshes.verts_packed_to_mesh_idx()
+        text_condition_per_subgraph = text_condition[mesh_idx_per_vertex]
 
-        x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
-        # x = x + text_condition_per_subgraph
+        x = self.gcn1(neutral_meshes_vertices_packed, neutral_meshes_edges_packed)
+        x = x + text_condition_per_subgraph  # Add text conditioning
         x = torch.relu(x)
-        x = self.gcn2(x, neutral_graph.edge_index)
+        x = self.gcn2(x, neutral_meshes_edges_packed)
 
         return x
 
     def common_step(self, batch):
 
-        neutral_graph = batch['neutral_graph']
-        target_graph = batch['expression_graph']
-        descriptions = batch['description']
+        neutral_meshes = batch['neutral_meshes']
+        expression_meshes = batch['expression_meshes']
+        descriptions = batch['descriptions']
 
-        displaced_vertices = self(neutral_graph, descriptions)
+        # Nodes with updated features that will become offsets with training
+        displacements = self(neutral_meshes, descriptions)
+
+        # Create a new mesh by summing the offsets
+        predicted_meshes = neutral_meshes.offset_verts(displacements)
 
         loss = self.loss_fn(
-            displaced_vertices,
-            target_graph.x,
-            vertices=neutral_graph.x,
-            edges=neutral_graph.edge_index,
-            batch=neutral_graph.batch
+            predicted_meshes,
+            expression_meshes
         )
 
-        return displaced_vertices, loss
+        return predicted_meshes, loss
 
     def compute_metrics(self, pred, batch):
         # TODO
@@ -124,18 +152,18 @@ class Model(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
         self.compute_metrics(pred, batch)
-        self.log("train_loss", loss, prog_bar=True, logger=True)
+        self.log("train_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
         self.compute_metrics(pred, batch)
-        self.log("val_loss", loss, prog_bar=True, logger=True)
+        self.log("val_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.log("test_loss", loss, prog_bar=True, logger=True)
+        self.log("test_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def configure_optimizers(self):

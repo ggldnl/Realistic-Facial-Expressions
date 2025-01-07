@@ -21,7 +21,6 @@ if __name__ == '__main__':
         download=config.DOWNLOAD,
         text_generation=DEFAULT_TEXT_GENERATION,
         batch_size=config.BATCH_SIZE,
-        mesh_drop_percent=config.MESH_DROP_PERCENTAGE
     )
 
     # Log to tensorboard
@@ -34,6 +33,7 @@ if __name__ == '__main__':
         batch_size=config.BATCH_SIZE
     )
 
+    """
     render_callback = RenderCallback(
         n_epochs=config.RENDER_INTERVAL,
         model=model,
@@ -42,6 +42,7 @@ if __name__ == '__main__':
         prompt=config.RENDER_PROMPT,
         distance=config.RENDER_RADIUS,
     )
+    """
 
     early_stop_callback = EarlyStopping(
         monitor='val_loss',  # Metric to monitor
@@ -59,7 +60,7 @@ if __name__ == '__main__':
         callbacks=[
             TQDMProgressBar(refresh_rate=20),
             early_stop_callback,
-            render_callback
+            # render_callback
         ]
     )
 

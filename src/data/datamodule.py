@@ -22,10 +22,14 @@ def collate_meshes(batch):
     neutral_batch = batch_meshes(neutral_paths)
     expression_batch = batch_meshes(expression_paths)
 
+    # We use pytorch3d Meshes objects that provide methods to
+    # 1. get a packed representation (used by the graph convolutional layers)
+    # 2. get a batched representation (used by the loss)
+    # 3. efficiently sum the displacements produced by the gnn (to get a predicted mesh)
     return {
-        "neutral_graph": neutral_batch,
-        "expression_graph": expression_batch,
-        "description": descriptions
+        "neutral_meshes": neutral_batch,
+        "expression_meshes": expression_batch,
+        "descriptions": descriptions
     }
 
 
@@ -108,7 +112,7 @@ class FacescapeDataModule(pl.LightningDataModule):
 
         # Default required files structure
         self.required_files = [
-            Path(self.data_dir, f'{i}', 'models_reg') for i in range(100)
+            Path(self.data_dir, f'{i}', 'models_reg') for i in [-2, 100]
         ]
 
         self.data = None
@@ -195,7 +199,6 @@ class FacescapeDataModule(pl.LightningDataModule):
         # Create the dataset with simplification parameters
         full_dataset = FacescapeDataset(
             self.data,
-            normalize=self.normalize
         )
 
         # Compute the sizes for train, val, and test splits
