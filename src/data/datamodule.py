@@ -19,8 +19,8 @@ def collate_meshes(batch):
     expression_paths = [item["expression_path"] for item in batch]
     descriptions = [item["description"] for item in batch]
 
-    neutral_batch = batch_meshes(neutral_paths)
-    expression_batch = batch_meshes(expression_paths)
+    neutral_batch = batch_meshes(neutral_paths, normalize=False)
+    expression_batch = batch_meshes(expression_paths, normalize=False)
 
     # We use pytorch3d Meshes objects that provide methods to
     # 1. get a packed representation (used by the graph convolutional layers)

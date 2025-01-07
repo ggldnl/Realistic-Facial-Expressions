@@ -2,10 +2,12 @@ from pathlib import Path
 import torch
 import numpy as np
 import trimesh
-from pytorch3d.io import load_obj, load_ply
+from pytorch3d.io import load_obj
+from pytorch3d.io import load_ply
 from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.structures import Meshes
 from pytorch3d.renderer import PointLights
+from pytorch3d.renderer import look_at_view_transform
 from pytorch3d.renderer import RasterizationSettings
 from pytorch3d.renderer import MeshRenderer
 from pytorch3d.renderer import MeshRasterizer
@@ -60,18 +62,38 @@ def read_mesh(
 
     return mesh
 
-def batch_meshes(meshes):
+def batch_meshes(meshes, normalize=False):
     """
     Batch a list of mesh node features into a single tensor.
 
     Args:
         meshes (list of torch.Tensor | list of ): Each tensor has shape (num_nodes, num_features) representing the nodes of a mesh.
+        normalize (bool): True to normalize the meshes, False otherwise.
 
     Returns:
         torch.Tensor: A tensor of shape (num_graphs, max_num_nodes, num_features), where `num_graphs` is the number of meshes,
                       `max_num_nodes` is the maximum number of nodes in any mesh, and `num_features` is the number of features per node.
     """
-    return load_objs_as_meshes(meshes)
+
+    meshes_obj = load_objs_as_meshes(meshes)
+
+    if normalize:
+
+        # Get vertices of the loaded meshes
+        verts = meshes_obj.verts_padded()
+        faces = meshes_obj.faces_padded()
+
+        # We scale normalize and center the target meshes to fit in a sphere of radius 1 centered at (0,0,0).
+        # (scale, center) will be used to bring the predicted mesh to its original center and scale
+        center = verts.mean(dim=-2, keepdim=True)  # Compute mean along the num_nodes dimension
+        verts_normalized = verts - center
+        norms = torch.norm(verts_normalized, dim=-1, keepdim=True)  # Compute norms for each node
+        max_norm = norms.max(dim=-2, keepdim=True).values
+        verts_normalized /= max_norm
+
+        meshes_obj = Meshes(verts=verts_normalized, faces=faces)
+
+    return meshes_obj
 
 def tensor_to_mesh(vertices, faces, vertex_normals=None):
     """
@@ -166,6 +188,27 @@ def get_pytorch3d_renderer(
 
     return renderer
 
+def faces_to_edges(faces):
+    """
+    Converts a tensor containing face indices to a tensor containing edge indices.
+    """
+
+    # Convert faces to edges (undirected edges)
+    edges = torch.cat([
+        faces[:, [0, 1]],  # Edge between vertex 0 and 1
+        faces[:, [1, 2]],  # Edge between vertex 1 and 2
+        faces[:, [2, 0]]  # Edge between vertex 2 and 0
+    ], dim=0)
+
+    # Remove duplicate edges (if graph is undirected)
+    edges = torch.cat([edges, edges[:, [1, 0]]], dim=0)  # Add reverse edges for undirected graph
+    edges = torch.unique(edges, dim=0)  # Remove duplicates
+
+    # Transpose edges to match PyTorch Geometric format
+    edge_index = edges.t()  # Shape: [2, num_edges]
+
+    return edge_index
+
 def visualize_mesh(
         mesh,
         image_size: int = 512,
@@ -173,7 +216,8 @@ def visualize_mesh(
         elev: float = 0.0,
         azim: float = 0.0,
         save_path: str = None,
-        show: bool = True
+        show: bool = True,
+        device='cuda'
 ) -> np.ndarray:
     """
     Visualizes a 3D mesh using either PyTorch3D or Trimesh.
@@ -190,22 +234,20 @@ def visualize_mesh(
     Returns:
         numpy array containing the rendered image
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     match mesh:
         case Meshes():
-            # Ensure mesh is on correct device
-            mesh = mesh.to(device)
 
             # Create renderer and render
-            renderer = get_pytorch3d_renderer(image_size, dist, elev, azim, device)
+            renderer = get_pytorch3d_renderer(image_size, dist, elev, azim, device=device)
             images = renderer(mesh)
             image = images[0, ..., :3].cpu().numpy()
 
         case trimesh.Trimesh():
+
             # Convert to pytorch3d format for rendering
-            verts = torch.tensor(mesh.vertices, device=device, dtype=torch.float32)
-            faces = torch.tensor(mesh.faces, device=device, dtype=torch.int64)
+            verts = torch.tensor(mesh.vertices, dtype=torch.float32)
+            faces = torch.tensor(mesh.faces, dtype=torch.int64)
 
             # Create white vertex colors if none exist
             if mesh.visual.vertex_colors is None:
@@ -213,7 +255,6 @@ def visualize_mesh(
             else:
                 vertex_colors = torch.tensor(
                     mesh.visual.vertex_colors[:, :3].astype(float) / 255.0,
-                    device=device,
                     dtype=torch.float32
                 )[None]
 
@@ -226,7 +267,7 @@ def visualize_mesh(
             )
 
             # Render
-            renderer = get_pytorch3d_renderer(image_size, dist, elev, azim, device)
+            renderer = get_pytorch3d_renderer(image_size, dist, elev, azim)
             images = renderer(pytorch3d_mesh)
             image = images[0, ..., :3].cpu().numpy()
 

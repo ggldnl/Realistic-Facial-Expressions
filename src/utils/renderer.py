@@ -1,6 +1,9 @@
+from pathlib import Path
 import numpy as np
 import pyvista
 import trimesh
+from pytorch3d.structures import Meshes
+from trimesh import Trimesh
 
 from src.utils.decorators import fixme
 
@@ -9,10 +12,6 @@ class Renderer:
 
     def __init__(self):
         pass
-
-    @staticmethod
-    def _load_mesh(model_in):
-        return trimesh.load(model_in, process=False)
 
     @staticmethod
     def extrinsic_to_pyvista(extrinsic_matrix):
@@ -163,16 +162,23 @@ class Renderer:
 
         if isinstance(model_in, str) or isinstance(model_in, Path):
             # Load the mesh using trimesh
-            mesh = self._load_mesh(model_in)
+            mesh = trimesh.load(model_in, process=False)
         else:
             mesh = model_in
 
-        # Each face must start with the number of vertices (3 for triangles)
-        faces = np.hstack([np.full((mesh.faces.shape[0], 1), 3), mesh.faces])  # Prefix faces with 3 (triangle)
-        faces = faces.astype(np.int64)
+        if isinstance(mesh, Trimesh):
+            faces = np.hstack([np.full((mesh.faces.shape[0], 1), 3), mesh.faces])  # Prefix faces with 3 (triangle)
+            faces = faces.astype(np.int64)
+            vertices = mesh.vertices
+        elif isinstance(mesh, Meshes):
+            faces = mesh.faces_list()[0].cpu().numpy().astype(np.int64)
+            faces = np.hstack([np.full((faces.shape[0], 1), 3), faces])  # Add a prefix with the number of nodes
+            vertices = mesh.verts_list()[0].cpu().numpy()
+        else:
+            raise ValueError(f'Unsupported type: {type(mesh)}')
 
         # Convert to PyVista mesh
-        pv_mesh = pyvista.PolyData(mesh.vertices, faces)
+        pv_mesh = pyvista.PolyData(vertices, faces)
 
         # Scale the mesh
         pv_mesh.scale([scale, scale, scale], inplace=True)

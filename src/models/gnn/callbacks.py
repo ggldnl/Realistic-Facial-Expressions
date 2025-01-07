@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
 
-from src.utils.mesh_utils import tensor_to_mesh
+from src.utils.mesh_utils import batch_meshes
 
 
 class RenderCallback(Callback):
@@ -16,6 +16,7 @@ class RenderCallback(Callback):
     def __init__(self,
                  n_epochs,  # Number of epochs after which we perform the rendering
                  model,  # Necessary to perform inference
+                 renderer,  # Mesh renderer
                  in_mesh,  # (Neutral) mesh to start with
                  out_dir,  # Folder where to save the results
                  prompt='smile',  # Prompt used to modify the neutral mesh during inference
@@ -29,6 +30,7 @@ class RenderCallback(Callback):
                  ):
         self.n_epochs = n_epochs
         self.model = model
+        self.renderer = renderer
         self.prompt = prompt
         self.out_dir = out_dir
 
@@ -51,14 +53,21 @@ class RenderCallback(Callback):
         if epoch % self.n_epochs == 0:
             print(f'\nPerforming inference on neutral mesh {self.in_mesh} with prompt: \'{self.prompt}\'')
 
+            """
             neutral_mesh = read_graph(self.in_mesh)
             neutral_mesh = neutral_mesh.to(pl_module.device)
             x = self.model(neutral_mesh, [self.prompt])
             pred_mesh = tensor_to_mesh(x.squeeze(0),
                                        neutral_mesh.faces)  # Batch containing a single mesh -> squeeze batch
+            """
+
+            meshes = batch_meshes([self.in_mesh], normalize=False)
+            displacements = self.model(meshes, [self.prompt])
+            pred_mesh = meshes.offset_verts(displacements)
+
             print('Inference completed. Performing rendering...')
 
-            renders = self.model.renderer.render_viewpoints(model_in=pred_mesh,
+            renders = self.renderer.render_viewpoints(model_in=pred_mesh,
                                                             num_views=self.n_viewpoints,
                                                             radius=self.distance,
                                                             elevation=self.elevation,

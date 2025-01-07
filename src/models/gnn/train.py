@@ -9,7 +9,7 @@ from src.data.datamodule import FacescapeDataModule
 from src.models.gnn.model import Model
 import src.models.gnn.config as config
 from src.models.gnn.callbacks import RenderCallback
-
+from src.utils.renderer import Renderer
 
 if __name__ == '__main__':
 
@@ -33,16 +33,15 @@ if __name__ == '__main__':
         batch_size=config.BATCH_SIZE
     )
 
-    """
     render_callback = RenderCallback(
         n_epochs=config.RENDER_INTERVAL,
         model=model,
+        renderer=Renderer(),
         in_mesh=config.DATA_DIR / '100/models_reg/1_neutral.obj',
         out_dir=config.RENDER_DIR,
         prompt=config.RENDER_PROMPT,
         distance=config.RENDER_RADIUS,
     )
-    """
 
     early_stop_callback = EarlyStopping(
         monitor='val_loss',  # Metric to monitor
@@ -60,7 +59,7 @@ if __name__ == '__main__':
         callbacks=[
             TQDMProgressBar(refresh_rate=20),
             early_stop_callback,
-            # render_callback
+            render_callback
         ]
     )
 

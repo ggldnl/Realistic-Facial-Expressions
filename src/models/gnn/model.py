@@ -4,7 +4,6 @@ import pytorch_lightning as pl
 import torch.nn as nn
 import torch
 
-from src.utils.renderer import Renderer
 from src.models.gnn.loss import custom_loss
 
 
@@ -78,38 +77,14 @@ class Model(pl.LightningModule):
         self.gcn2 = GCNConv(self.latent_size, self.input_dim)
         self.text_encoder = TextEncoder(self.latent_size)
 
-        self.renderer = Renderer()
-
         # Define the loss function
         self.loss_fn = custom_loss
-
-    @staticmethod
-    def faces_to_edges(faces):
-        """
-        Converts a tensor containing face indices to a tensor containing edge indices.
-        """
-
-        # Convert faces to edges (undirected edges)
-        edges = torch.cat([
-            faces[:, [0, 1]],  # Edge between vertex 0 and 1
-            faces[:, [1, 2]],  # Edge between vertex 1 and 2
-            faces[:, [2, 0]]  # Edge between vertex 2 and 0
-        ], dim=0)
-
-        # Remove duplicate edges (if graph is undirected)
-        edges = torch.cat([edges, edges[:, [1, 0]]], dim=0)  # Add reverse edges for undirected graph
-        edges = torch.unique(edges, dim=0)  # Remove duplicates
-
-        # Transpose edges to match PyTorch Geometric format
-        edge_index = edges.t()  # Shape: [2, num_edges]
-
-        return edge_index
 
     def forward(self, neutral_meshes, descriptions):
 
         # Get a packed representation of the meshes
         neutral_meshes_vertices_packed = neutral_meshes.verts_packed()
-        neutral_meshes_edges_packed = neutral_meshes.edges_packed()
+        neutral_meshes_edges_packed = neutral_meshes.edges_packed().T
 
         # Text conditioning
         text_condition = self.text_encoder(descriptions)  # (batch_size, latent_space)
