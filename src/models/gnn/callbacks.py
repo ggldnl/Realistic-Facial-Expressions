@@ -68,11 +68,11 @@ class RenderCallback(Callback):
             print('Inference completed. Performing rendering...')
 
             renders = self.renderer.render_viewpoints(model_in=pred_mesh,
-                                                            num_views=self.n_viewpoints,
-                                                            radius=self.distance,
-                                                            elevation=self.elevation,
-                                                            scale=1.0,
-                                                            rend_size=(self.render_w, self.render_h))
+                                                      num_views=self.n_viewpoints,
+                                                      radius=self.distance,
+                                                      elevation=self.elevation,
+                                                      scale=1.0,
+                                                      rend_size=(self.render_w, self.render_h))
 
             print('Rendering completed. Saving the result...')
 

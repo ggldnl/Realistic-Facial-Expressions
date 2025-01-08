@@ -49,3 +49,12 @@ LEARNING_RATE = 1e-3
 RENDER_INTERVAL = 1
 RENDER_PROMPT = 'smile'
 RENDER_RADIUS = 5
+
+# --------------------------------- Loss Weights ---------------------------- #
+
+# Loss function parameters
+W_CHAMFER = 1     # Weight for chamfer loss
+W_EDGE = 1         # Weight for edge loss
+W_NORMAL = 1       # Weight for normal consistency loss
+W_LAPLACIAN = 1    # Weight for laplacian smoothing loss
+N_SAMPLES = 5000     # Number of points to sample for chamfer loss
