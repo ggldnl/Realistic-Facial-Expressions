@@ -56,39 +56,54 @@ def read_mesh(
 
     return mesh
 
-
-def read_meshes(meshes, normalize=False, load_textures=True):
+def read_meshes(meshes, normalize=False):
     """
     Batch a list of mesh node features into a single pytorch3d.Meshes object.
 
     Parameters:
         meshes (list[str | Path]): List of paths to meshes.
         normalize (bool): True to normalize the meshes, False otherwise.
-        load_textures (bool): If True, tries to load the textures.
 
     Returns:
         pytorch3d.Meshes: pytorch3d's Meshes object containing all the meshes (eventually normalized).
     """
 
-    meshes_obj = load_objs_as_meshes(meshes, load_textures=load_textures)
+    all_verts = []
+    all_faces = []
+    all_normals = []
 
-    if normalize:
+    for obj_path in meshes:
 
-        # Get vertices of the loaded meshes
-        verts = meshes_obj.verts_padded()
-        faces = meshes_obj.faces_padded()
+        if isinstance(obj_path, str):
+            obj_path = Path(obj_path)
 
-        # We scale normalize and center the target meshes to fit in a sphere of radius 1 centered at (0,0,0).
-        # (scale, center) will be used to bring the predicted mesh to its original center and scale
-        center = verts.mean(dim=-2, keepdim=True)  # Compute mean along the num_nodes dimension
-        verts_normalized = verts - center
-        norms = torch.norm(verts_normalized, dim=-1, keepdim=True)  # Compute norms for each node
-        max_norm = norms.max(dim=-2, keepdim=True).values
-        verts_normalized /= max_norm
+        # Validate file extension
+        if obj_path.suffix not in ['.obj', '.off', '.ply']:
+            raise ValueError(f"Unsupported file extension for {obj_path}.")
 
-        meshes_obj = Meshes(verts=verts_normalized, faces=faces)
+        # Load using appropriate PyTorch3D loader based on extension
+        if obj_path.suffix == '.obj':
+            verts, faces, aux = load_obj(obj_path)
+            faces = faces.verts_idx
+            normals = aux.normals
+        else:  # .ply
+            verts, faces = load_ply(obj_path)
+            normals = None
 
-    return meshes_obj
+        # Normalize if requested
+        if normalize:
+            center = verts.mean(0)
+            scale = max((verts - center).abs().max(0)[0])
+            verts = (verts - center) / scale
+
+        all_verts.append(verts)
+        all_faces.append(faces)
+        all_normals.append(normals)
+
+    # Create a Meshes object
+    meshes = Meshes(verts=all_verts, faces=all_faces, verts_normals=all_normals)
+
+    return meshes
 
 
 def tensor_to_mesh(vertices, faces, vertex_normals=None):
