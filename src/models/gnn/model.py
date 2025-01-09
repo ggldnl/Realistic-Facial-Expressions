@@ -123,7 +123,9 @@ class Model(pl.LightningModule):
         displacements = self(neutral_meshes, descriptions)
 
         # Create a new mesh by summing the offsets
+        weights_backup = neutral_meshes.verts_normals_packed().clone()
         predicted_meshes = neutral_meshes.offset_verts(displacements)  # returns new object
+        predicted_meshes._verts_normals_packed = weights_backup
 
         loss = self.loss_fn(
             predicted_meshes,
