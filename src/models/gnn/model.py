@@ -56,6 +56,7 @@ class TextEncoder(pl.LightningModule):
         projection_len = torch.norm(projected_vec, dim=-1, keepdim=True)
         return projected_vec / projection_len
 
+
 class Model(pl.LightningModule):
 
     def __init__(self,
@@ -63,6 +64,11 @@ class Model(pl.LightningModule):
                  input_dim=3,
                  lr=1e-3,
                  batch_size=4,
+                 w_chamfer=1.0,
+                 w_edge=1.0,
+                 w_normal=1.0,
+                 w_laplacian=1.0,
+                 n_samples=5000
                  ):
 
         super().__init__()
@@ -71,6 +77,13 @@ class Model(pl.LightningModule):
         self.input_dim = input_dim
         self.lr = lr
         self.batch_size = batch_size
+
+        # Loss weights
+        self.w_chamfer = w_chamfer
+        self.w_edge = w_edge
+        self.w_normal = w_normal
+        self.w_laplacian = w_laplacian
+        self.n_samples = n_samples
 
         # Define the architecture
         self.gcn1 = GCNConv(self.input_dim, self.latent_size)
@@ -114,8 +127,15 @@ class Model(pl.LightningModule):
 
         loss = self.loss_fn(
             predicted_meshes,
-            expression_meshes
+            expression_meshes,
+            w_chamfer=self.w_chamfer,
+            w_edge=self.w_edge,
+            w_normal=self.w_normal,
+            w_laplacian=self.w_laplacian,
+            n_samples=self.n_samples
         )
+
+        self.log("disp_mean", torch.abs(displacements).mean().item(), batch_size=self.batch_size, prog_bar=True, logger=True)
 
         return predicted_meshes, loss
 

@@ -28,9 +28,15 @@ if __name__ == '__main__':
 
     # Create the model
     model = Model(
-        config.LATENT_SIZE,
+        latent_size=config.LATENT_SIZE,
+        input_dim=config.INPUT_DIM,
         lr=config.LEARNING_RATE,
-        batch_size=config.BATCH_SIZE
+        batch_size=config.BATCH_SIZE,
+        w_chamfer=config.W_CHAMFER,
+        w_edge=config.W_EDGE,
+        w_normal=config.W_NORMAL,
+        w_laplacian=config.W_LAPLACIAN,
+        n_samples=config.N_SAMPLES
     )
 
     render_callback = RenderCallback(
@@ -55,9 +61,8 @@ if __name__ == '__main__':
         max_epochs=config.EPOCHS,
         logger=logger,
         accelerator='auto',
-        # gradient_clip_val=1.0,
         callbacks=[
-            TQDMProgressBar(refresh_rate=20),
+            #TQDMProgressBar(refresh_rate=20),
             early_stop_callback,
             render_callback
         ]
