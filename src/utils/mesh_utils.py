@@ -1,19 +1,13 @@
 from pathlib import Path
-import torch
-import numpy as np
-import trimesh
 from pytorch3d.io import load_obj
 from pytorch3d.io import load_ply
 from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.structures import Meshes
-from pytorch3d.renderer import PointLights
-from pytorch3d.renderer import look_at_view_transform
-from pytorch3d.renderer import RasterizationSettings
-from pytorch3d.renderer import MeshRenderer
-from pytorch3d.renderer import MeshRasterizer
-from pytorch3d.renderer import SoftPhongShader
-from pytorch3d.renderer import TexturesVertex
-from pytorch3d.renderer import FoVPerspectiveCameras
+import torch.nn.functional as F
+import pyvista as pv
+import numpy as np
+import trimesh
+import torch
 
 
 def read_mesh(
@@ -23,9 +17,9 @@ def read_mesh(
     """
     Reads a mesh file using either PyTorch3D or trimesh loaders.
 
-    Args:
-        obj_path (str or Path): Path to the mesh file
-        normalize (bool): Whether to normalize vertex coordinates
+    Parameters:
+        obj_path (str or Path): Path to the mesh file.
+        normalize (bool): Whether to normalize vertex coordinates.
 
     Returns:
         PyTorch3D Meshes object
@@ -62,20 +56,21 @@ def read_mesh(
 
     return mesh
 
-def batch_meshes(meshes, normalize=False):
-    """
-    Batch a list of mesh node features into a single tensor.
 
-    Args:
-        meshes (list of torch.Tensor | list of ): Each tensor has shape (num_nodes, num_features) representing the nodes of a mesh.
+def read_meshes(meshes, normalize=False, load_textures=True):
+    """
+    Batch a list of mesh node features into a single pytorch3d.Meshes object.
+
+    Parameters:
+        meshes (list[str | Path]): List of paths to meshes.
         normalize (bool): True to normalize the meshes, False otherwise.
+        load_textures (bool): If True, tries to load the textures.
 
     Returns:
-        torch.Tensor: A tensor of shape (num_graphs, max_num_nodes, num_features), where `num_graphs` is the number of meshes,
-                      `max_num_nodes` is the maximum number of nodes in any mesh, and `num_features` is the number of features per node.
+        pytorch3d.Meshes: pytorch3d's Meshes object containing all the meshes (eventually normalized).
     """
 
-    meshes_obj = load_objs_as_meshes(meshes)
+    meshes_obj = load_objs_as_meshes(meshes, load_textures=load_textures)
 
     if normalize:
 
@@ -95,14 +90,15 @@ def batch_meshes(meshes, normalize=False):
 
     return meshes_obj
 
+
 def tensor_to_mesh(vertices, faces, vertex_normals=None):
     """
     Creates a trimesh object from tensor data.
 
-    Args:
-        vertices (torch.Tensor): Vertex positions tensor of shape (N, 3)
-        faces (torch.Tensor): Face indices tensor of shape (M, 3)
-        vertex_normals (torch.Tensor, optional): Vertex normals tensor of shape (N, 3)
+    Parameters:
+        vertices (torch.Tensor): Vertex positions tensor of shape (N, 3).
+        faces (torch.Tensor): Face indices tensor of shape (M, 3).
+        vertex_normals (torch.Tensor, optional): Vertex normals tensor of shape (N, 3).
 
     Returns:
         trimesh.Trimesh: The created mesh object
@@ -126,71 +122,44 @@ def tensor_to_mesh(vertices, faces, vertex_normals=None):
     return mesh
 
 
-def get_pytorch3d_renderer(
-        image_size: int = 512,
-        dist: float = 1.5,
-        elev: float = 0.0,
-        azim: float = 0.0,
-        device: str = "cuda"
-) -> MeshRenderer:
+def pad_mesh(tensor, target_size):
     """
-    Creates a PyTorch3D renderer with specified parameters.
-
-    Args:
-        image_size: Size of the rendered image
-        dist: Distance of camera from origin
-        elev: Elevation angle in degrees
-        azim: Azimuth angle in degrees
-        device: Device to place renderer on
-
-    Returns:
-        MeshRenderer configured with specified parameters
+    Pad a tensor to the desired size.
     """
-    # Get camera position based on angles
-    R, T = look_at_view_transform(dist=dist, elev=elev, azim=azim)
+    pad_size = target_size - tensor.size(0)
+    return F.pad(tensor, (0, 0, 0, pad_size))
 
-    # Initialize perspective camera
-    cameras = FoVPerspectiveCameras(
-        R=R,
-        T=T,
-        device=device,
-        fov=60  # Field of view in degrees
-    )
 
-    # Configure rasterization settings
-    raster_settings = RasterizationSettings(
-        image_size=image_size,
-        blur_radius=0.0,
-        faces_per_pixel=1,
-    )
+def unpack_meshes(pack, batch_indices):
+    unique_indices = batch_indices.unique()
+    return torch.stack([pack[batch_indices == idx] for idx in unique_indices])
 
-    # Set up lighting
-    lights = PointLights(
-        device=device,
-        location=[[0.0, 0.0, 2.0]],
-        ambient_color=[[0.7, 0.7, 0.7]],
-        diffuse_color=[[0.3, 0.3, 0.3]],
-        specular_color=[[0.2, 0.2, 0.2]]
-    )
 
-    # Create renderer
-    renderer = MeshRenderer(
-        rasterizer=MeshRasterizer(
-            cameras=cameras,
-            raster_settings=raster_settings
-        ),
-        shader=SoftPhongShader(
-            device=device,
-            cameras=cameras,
-            lights=lights
-        )
-    )
+def pack_meshes(batch):
+    """
+    Convert (num_meshes, max_num_nodes, num_features) a batch to a pack (num_meshes*max_num_nodes, num_features).
+    It returns both the pack and the batch indices. The input meshes in the batch are supposed to be padded,
+    otherwise the conversion will fail.
+    """
 
-    return renderer
+    # Create an indexing tensor
+    batch_indices = torch.cat([torch.full((batch[i].size(0),), i, dtype=torch.long) for i in range(len(batch))])
+
+    # Concatenate the meshes into a single tensor
+    pack = torch.cat(batch, dim=0)
+
+    return pack, batch_indices
+
 
 def faces_to_edges(faces):
     """
     Converts a tensor containing face indices to a tensor containing edge indices.
+
+    Parameters:
+        faces (torch.Tensor): Tensor containing face indices.
+
+    Returns:
+        torch.Tensor: Tensor containing edges indices.
     """
 
     # Convert faces to edges (undirected edges)
@@ -209,83 +178,111 @@ def faces_to_edges(faces):
 
     return edge_index
 
-def visualize_mesh(
-        mesh,
-        image_size: int = 512,
-        dist: float = 1.5,
-        elev: float = 0.0,
-        azim: float = 0.0,
-        save_path: str = None,
-        show: bool = True,
-        device='cuda'
-) -> np.ndarray:
+def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_edges=False):
     """
-    Visualizes a 3D mesh using either PyTorch3D or Trimesh.
+    Visualizes a 3D mesh using PyVista.
 
-    Args:
-        mesh: Either a PyTorch3D Meshes object or a Trimesh object
-        image_size: Size of the output image
-        dist: Distance of camera from origin
-        elev: Elevation angle in degrees
-        azim: Azimuth angle in degrees
-        save_path: Path to save the rendered image (optional)
-        show: Whether to display the image
-
-    Returns:
-        numpy array containing the rendered image
+    Parameters:
+        mesh (dict, tuple(torch.Tensor, torch.Tensor), pytorch3d.Meshes, trimesh.Trimesh):
+            The input mesh to visualize. Can be one of the following:
+            - A dictionary with keys "vertices" (Nx3 tensor/array) and "faces" (Fx3 tensor/array).
+            - Two tensors containing vertex positions (Nx3) and a corresponding faces tensor (Fx3).
+            - A PyTorch3D Meshes object (must contain exactly one mesh).
+            - A Trimesh object.
+        color (tuple(floats), torch.Tensor, np.nd.array): RGB color to apply to the mesh.
+            If a tuple is provided, the same color will be applied to all the vertices.
+            If a tensor or an array are provided, the number of colors must match the number of
+            vertices and each color will be applied to the respective vertex.
+        show_edges (bool): Whether to show the edges of the mesh. Default is False.
     """
 
-    match mesh:
-        case Meshes():
+    # Handle different mesh input types
+    if isinstance(mesh, dict):
+        vertices = mesh["vertices"]
+        faces = mesh["faces"]
 
-            # Create renderer and render
-            renderer = get_pytorch3d_renderer(image_size, dist, elev, azim, device=device)
-            images = renderer(mesh)
-            image = images[0, ..., :3].cpu().numpy()
+        if isinstance(vertices, torch.Tensor):
+            vertices = vertices.cpu().numpy()
+        if isinstance(faces, torch.Tensor):
+            faces = faces.cpu().numpy()
 
-        case trimesh.Trimesh():
+    elif isinstance(mesh, Meshes):
+        if mesh.verts_padded().shape[0] != 1:
+            raise ValueError("PyTorch3D Meshes object must contain exactly one mesh.")
 
-            # Convert to pytorch3d format for rendering
-            verts = torch.tensor(mesh.vertices, dtype=torch.float32)
-            faces = torch.tensor(mesh.faces, dtype=torch.int64)
+        vertices = mesh.verts_packed().cpu().numpy()
+        faces = mesh.faces_packed().cpu().numpy()
 
-            # Create white vertex colors if none exist
-            if mesh.visual.vertex_colors is None:
-                vertex_colors = torch.ones_like(verts)[None]  # white
-            else:
-                vertex_colors = torch.tensor(
-                    mesh.visual.vertex_colors[:, :3].astype(float) / 255.0,
-                    dtype=torch.float32
-                )[None]
+    elif isinstance(mesh, trimesh.Trimesh):
+        vertices = mesh.vertices
+        faces = mesh.faces
 
-            # Create PyTorch3D mesh
-            textures = TexturesVertex(verts_features=vertex_colors)
-            pytorch3d_mesh = Meshes(
-                verts=[verts],
-                faces=[faces],
-                textures=textures
-            )
+    elif isinstance(mesh, tuple) and len(mesh) == 2:
+        vertices, faces = mesh
+        if isinstance(vertices, torch.Tensor):
+            vertices = vertices.cpu().numpy()
+        if isinstance(faces, torch.Tensor):
+            faces = faces.cpu().numpy()
 
-            # Render
-            renderer = get_pytorch3d_renderer(image_size, dist, elev, azim)
-            images = renderer(pytorch3d_mesh)
-            image = images[0, ..., :3].cpu().numpy()
+    else:
+        raise TypeError("Unsupported mesh type. Must be dict, tuple, PyTorch3D Meshes, or trimesh.Trimesh.")
 
-        case _:
-            raise ValueError(f"Unsupported mesh type: {type(mesh)}. Must be either PyTorch3D Meshes or Trimesh object.")
+    # Convert faces to PyVista format
+    pv_faces = np.insert(faces, 0, 3, axis=1).flatten()
+    pv_mesh = pv.PolyData(vertices, pv_faces)
+    num_vertices = vertices.shape[0]
 
-    # Convert to uint8 for display/saving
-    image = (image * 255).astype(np.uint8)
+    # Handle vertex colors: use provided colors or fallback to default
+    if isinstance(color, tuple):
+        if len(color) != 3:
+            raise ValueError("Color tuple must contain 3 values (RGB).")
+        vertex_colors = np.tile(color, (vertices.shape[0], 1))
 
-    if save_path:
-        import imageio
-        imageio.imsave(save_path, image)
+    elif isinstance(color, np.ndarray):
+        if color.shape != (num_vertices, 3):
+            raise ValueError(f"Color array must have shape ({num_vertices}, 3), has shape {color.shape} instead.")
+        vertex_colors = color
 
-    if show:
-        import matplotlib.pyplot as plt
-        plt.figure(figsize=(10, 10))
-        plt.imshow(image)
-        plt.axis('off')
-        plt.show()
+    elif isinstance(color, torch.Tensor):
+        if (color.shape[0], color.shape[1]) != (num_vertices, 3):
+            raise ValueError(f"Color tensor must have shape ({num_vertices}, 3), has shape {color.shape} instead.")
+        vertex_colors = color.cpu().numpy()
 
-    return image
+    else:
+        raise ValueError("Unsupported color type. Must be tuple, np.ndarray, torch.Tensor.")
+
+    pv_mesh.point_data["Color"] = vertex_colors
+
+    # Plot the mesh
+    plotter = pv.Plotter()
+    plotter.add_mesh(pv_mesh, scalars="Color", rgb=True, show_edges=show_edges)
+
+    # Add axes for reference
+    plotter.add_axes()
+    plotter.show()
+
+
+# Test the visualization
+if __name__ == "__main__":
+
+    root_dir = Path(__file__).parent.parent.parent
+    mesh_path = Path(root_dir, 'datasets/facescape_highlighted/100/models_reg/1_neutral.obj')
+
+    # Simple visualization with a Meshes object
+    """
+    color = torch.tensor([0.0, 0.0, 1.0])
+    mesh = load_objs_as_meshes([mesh_path])
+    visualize_mesh(mesh)
+    """
+
+    # Load a mesh with vertex colors
+    vertices, faces, aux = load_obj(mesh_path)
+
+    # Try to use the normals for the color
+    if aux.normals is not None:
+        color = aux.normals
+    else:
+        color = (0.0, 0.0, 0.1)  # Fallback to blue
+
+    # Visualize the mesh
+    visualize_mesh((vertices, faces.verts_idx), color=color)

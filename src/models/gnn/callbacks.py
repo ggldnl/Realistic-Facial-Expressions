@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
 
-from src.utils.mesh_utils import batch_meshes
+from src.utils.mesh_utils import read_meshes
 
 
 class RenderCallback(Callback):
@@ -53,15 +53,7 @@ class RenderCallback(Callback):
         if epoch % self.n_epochs == 0:
             print(f'\nPerforming inference on neutral mesh {self.in_mesh} with prompt: \'{self.prompt}\'')
 
-            """
-            neutral_mesh = read_graph(self.in_mesh)
-            neutral_mesh = neutral_mesh.to(pl_module.device)
-            x = self.model(neutral_mesh, [self.prompt])
-            pred_mesh = tensor_to_mesh(x.squeeze(0),
-                                       neutral_mesh.faces)  # Batch containing a single mesh -> squeeze batch
-            """
-
-            meshes = batch_meshes([self.in_mesh], normalize=False)
+            meshes = read_meshes([self.in_mesh], normalize=False)
             displacements = self.model(meshes, [self.prompt])
             pred_mesh = meshes.offset_verts(displacements)
 
