@@ -62,7 +62,7 @@ class RenderCallback(Callback):
 
             print('Inference completed. Performing rendering...')
 
-            neutral_renders = self.renderer.render_viewpoints(model_in=pred_mesh,
+            renders = self.renderer.render_viewpoints(model_in=pred_mesh,
                                                       num_views=self.n_viewpoints,
                                                       radius=self.distance,
                                                       elevation=self.elevation,
@@ -70,10 +70,13 @@ class RenderCallback(Callback):
                                                       rend_size=(self.render_w, self.render_h))
 
             expression_renders = None
+            neutral_renders = None
             if self.ref_mesh:
 
+                # Read the expression mesh if provided
                 expression_meshes = read_meshes([self.ref_mesh], normalize=True)
 
+                # Render the expression mesh
                 expression_renders = self.renderer.render_viewpoints(model_in=expression_meshes,
                                                       num_views=self.n_viewpoints,
                                                       radius=self.distance,
@@ -81,22 +84,35 @@ class RenderCallback(Callback):
                                                       scale=1.0,
                                                       rend_size=(self.render_w, self.render_h))
 
+                # Render the neutral mesh
+                neutral_renders = self.renderer.render_viewpoints(model_in=expression_meshes,
+                                                num_views=self.n_viewpoints,
+                                                radius=self.distance,
+                                                elevation=self.elevation,
+                                                scale=1.0,
+                                                rend_size=(self.render_w, self.render_h))
+
             print('Rendering completed. Saving the result...')
 
             # Stitch together the images
-            stitched_image = np.concatenate(neutral_renders, axis=1)
+            morphed_image = np.concatenate(renders, axis=1)
 
-            if expression_renders:
+            if expression_renders and neutral_renders:
 
                 stitched_expression_image = np.concatenate(expression_renders, axis=1)
-                stitched_image = np.concatenate([stitched_image, stitched_expression_image], axis=0)
+                stitched_neutral_image = np.concatenate(neutral_renders, axis=1)
+                morphed_image = np.concatenate([
+                    stitched_neutral_image,
+                    morphed_image,
+                    stitched_expression_image
+                ], axis=0)
 
             # Display the stitched image
             plt.figure(figsize=(12, 6))
-            plt.imshow(stitched_image, cmap='gray')  # Use 'gray' if grayscale images
+            plt.imshow(morphed_image, cmap='gray')  # Use 'gray' if grayscale images
             plt.axis('off')  # Hide axes
 
             # Save the image
             output_path = Path(self.out_dir, f"epoch_{epoch:02d}.png")
-            plt.imsave(output_path, stitched_image)
+            plt.imsave(output_path, morphed_image)
             print(f"Saved renders for epoch {epoch} at {output_path}.")
