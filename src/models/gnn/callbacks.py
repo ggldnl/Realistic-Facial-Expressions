@@ -29,6 +29,7 @@ class RenderCallback(Callback):
                  render_w=600,
                  render_h=800,
                  ):
+        super().__init__()
         self.n_epochs = n_epochs
         self.model = model
         self.renderer = renderer
@@ -57,6 +58,7 @@ class RenderCallback(Callback):
             print(f'\nPerforming inference on neutral mesh {self.in_mesh} with prompt: \'{self.prompt}\'')
 
             meshes = read_meshes([self.in_mesh], normalize=True)
+            meshes = meshes.to(pl_module.device)
             displacements = self.model(meshes, [self.prompt])
             pred_mesh = meshes.offset_verts(displacements)
 
@@ -72,25 +74,24 @@ class RenderCallback(Callback):
             expression_renders = None
             neutral_renders = None
             if self.ref_mesh:
-
                 # Read the expression mesh if provided
                 expression_meshes = read_meshes([self.ref_mesh], normalize=True)
 
                 # Render the expression mesh
                 expression_renders = self.renderer.render_viewpoints(model_in=expression_meshes,
-                                                      num_views=self.n_viewpoints,
-                                                      radius=self.distance,
-                                                      elevation=self.elevation,
-                                                      scale=1.0,
-                                                      rend_size=(self.render_w, self.render_h))
+                                                                     num_views=self.n_viewpoints,
+                                                                     radius=self.distance,
+                                                                     elevation=self.elevation,
+                                                                     scale=1.0,
+                                                                     rend_size=(self.render_w, self.render_h))
 
                 # Render the neutral mesh
-                neutral_renders = self.renderer.render_viewpoints(model_in=expression_meshes,
-                                                num_views=self.n_viewpoints,
-                                                radius=self.distance,
-                                                elevation=self.elevation,
-                                                scale=1.0,
-                                                rend_size=(self.render_w, self.render_h))
+                neutral_renders = self.renderer.render_viewpoints(model_in=meshes,
+                                                                  num_views=self.n_viewpoints,
+                                                                  radius=self.distance,
+                                                                  elevation=self.elevation,
+                                                                  scale=1.0,
+                                                                  rend_size=(self.render_w, self.render_h))
 
             print('Rendering completed. Saving the result...')
 
@@ -98,7 +99,6 @@ class RenderCallback(Callback):
             morphed_image = np.concatenate(renders, axis=1)
 
             if expression_renders and neutral_renders:
-
                 stitched_expression_image = np.concatenate(expression_renders, axis=1)
                 stitched_neutral_image = np.concatenate(neutral_renders, axis=1)
                 morphed_image = np.concatenate([
@@ -106,11 +106,6 @@ class RenderCallback(Callback):
                     morphed_image,
                     stitched_expression_image
                 ], axis=0)
-
-            # Display the stitched image
-            plt.figure(figsize=(12, 6))
-            plt.imshow(morphed_image, cmap='gray')  # Use 'gray' if grayscale images
-            plt.axis('off')  # Hide axes
 
             # Save the image
             output_path = Path(self.out_dir, f"epoch_{epoch:02d}.png")
