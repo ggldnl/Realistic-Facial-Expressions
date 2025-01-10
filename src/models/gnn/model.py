@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 import torch.nn as nn
 import torch
 
-from src.models.gnn.loss import custom_loss
+from src.utils.loss import custom_loss
 
 
 class TextEncoder(pl.LightningModule):
@@ -58,7 +58,6 @@ class TextEncoder(pl.LightningModule):
 
 
 class Model(pl.LightningModule):
-
     def __init__(self,
                  latent_size,
                  input_dim=3,
@@ -70,7 +69,6 @@ class Model(pl.LightningModule):
                  w_laplacian=1.0,
                  n_samples=5000
                  ):
-
         super().__init__()
 
         self.latent_size = latent_size
@@ -93,7 +91,11 @@ class Model(pl.LightningModule):
         # Define the loss function
         self.loss_fn = custom_loss
 
+        self.save_hyperparameters()
+
     def forward(self, neutral_meshes, descriptions):
+        # Ensure meshes are on the correct device
+        neutral_meshes = neutral_meshes.to(self.device)
 
         # Get a packed representation of the meshes
         neutral_meshes_vertices_packed = neutral_meshes.verts_packed()
@@ -106,6 +108,11 @@ class Model(pl.LightningModule):
         mesh_idx_per_vertex = neutral_meshes.verts_packed_to_mesh_idx()
         text_condition_per_subgraph = text_condition[mesh_idx_per_vertex]
 
+        # Ensure all tensors are on the same device
+        neutral_meshes_vertices_packed = neutral_meshes_vertices_packed.to(self.device)
+        neutral_meshes_edges_packed = neutral_meshes_edges_packed.to(self.device)
+        text_condition_per_subgraph = text_condition_per_subgraph.to(self.device)
+
         x = self.gcn1(neutral_meshes_vertices_packed, neutral_meshes_edges_packed)
         x = x + text_condition_per_subgraph  # Add text conditioning
         x = torch.relu(x)
@@ -114,9 +121,9 @@ class Model(pl.LightningModule):
         return x
 
     def common_step(self, batch):
-
-        neutral_meshes = batch['neutral_meshes']
-        expression_meshes = batch['expression_meshes']
+        # Move batch data to device
+        neutral_meshes = batch['neutral_meshes'].to(self.device)
+        expression_meshes = batch['expression_meshes'].to(self.device)
         descriptions = batch['descriptions']
 
         # Nodes with updated features that will become offsets with training
@@ -137,7 +144,11 @@ class Model(pl.LightningModule):
             n_samples=self.n_samples
         )
 
-        self.log("disp_mean", torch.abs(displacements).mean().item(), batch_size=self.batch_size, prog_bar=True, logger=True)
+        self.log("disp_mean",
+                 torch.abs(displacements).mean().item(),
+                 batch_size=self.batch_size,
+                 prog_bar=True,
+                 logger=True)
 
         return predicted_meshes, loss
 
@@ -148,18 +159,30 @@ class Model(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
         self.compute_metrics(pred, batch)
-        self.log("train_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
+        self.log("train_loss",
+                 loss,
+                 batch_size=self.batch_size,
+                 prog_bar=True,
+                 logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
         self.compute_metrics(pred, batch)
-        self.log("val_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
+        self.log("val_loss",
+                 loss,
+                 batch_size=self.batch_size,
+                 prog_bar=True,
+                 logger=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.log("test_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
+        self.log("test_loss",
+                 loss,
+                 batch_size=self.batch_size,
+                 prog_bar=True,
+                 logger=True)
         return loss
 
     def configure_optimizers(self):

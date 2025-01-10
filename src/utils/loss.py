@@ -1,144 +1,199 @@
+from pytorch3d.ops import sample_points_from_meshes
+from pytorch3d.ops import knn_points
+from pytorch3d.loss import mesh_edge_loss
+from pytorch3d.loss import mesh_laplacian_smoothing
+from pytorch3d.loss import mesh_normal_consistency
 import torch
-import torch.nn.functional as F
-from torchmetrics.functional import pairwise_euclidean_distance
-from torch_geometric.utils import to_dense_adj
+import numpy as np
+
+def get_chamfer_distances(pred, target):
+
+    # Add batch dimension if needed
+    if pred.dim() == 2:
+        pred = pred.unsqueeze(0)  # Shape: (1, n_samples, 3)
+    if target.dim() == 2:
+        target = target.unsqueeze(0)  # Shape: (1, n_samples, 3)
+
+    # Compute the nearest neighbors in both directions
+    # pred -> target: for each point in pred, find nearest in target
+    nearest_pred = knn_points(pred, target, K=1)
+    # target -> pred: for each point in target, find nearest in pred
+    nearest_target = knn_points(target, pred, K=1)
+
+    # Get the distances.
+    # dists has shape (batch_size, n_points, K), but since K=1, we can squeeze it
+    dist1 = nearest_pred.dists.squeeze(-1)  # Shape: (batch_size, n_samples)
+    dist2 = nearest_target.dists.squeeze(-1)  # Shape: (batch_size, n_samples)
+
+    return dist1, dist2
 
 
-def chamfer_distance(pred, target):
+def cartesian_to_spherical(cartesian_points):
     """
-    Compute the chamfer distance between prediction and target tensors.
-    Chamfer distance is efficient to compute and works for tensors with
-    different sizes. This requires us to compute a distance matrix that
-    is too big to fit to memory in most cases.
-    """
+    Convert Cartesian coordinates to spherical coordinates (r, theta, phi).
 
-    # Compute pairwise distances
-    distances = pairwise_euclidean_distance(pred, target)
+    Parameters:
+        cartesian_points (np.ndarray): Array of shape (N, 3) with Cartesian coordinates.
 
-    # For each point in pred, find the closest point in target
-    min_pred_to_target = distances.min(dim=1)[0]
-
-    # For each point in target, find the closest point in min
-    min_target_to_pred = distances.min(dim=0)[0]
-
-    # Compute average of these distances
-    chamfer = torch.mean(min_pred_to_target) + torch.mean(min_target_to_pred)
-
-    return chamfer
-
-def mse_loss(pred, target):
-    """
-    Computes the Mean Squared Error (MSE) loss between the predicted and target values.
-    Penalizes larger errors more heavily, which can help converge to accurate predictions,
-    but it is sensitive to outliers as larger errors dominate the loss due to squaring.
-    """
-    return F.mse_loss(pred, target)
-
-def compute_adjacency_matrix(vertices, faces):
-    """
-    Computes the adjacency matrix for a mesh given vertices and faces.
-    """
-    num_vertices = vertices.shape[0]
-
-    # Initialize an empty adjacency matrix
-    adj_matrix = torch.zeros((num_vertices, num_vertices), dtype=torch.float32)
-
-    for face in faces:
-
-        v0, v1, v2 = face
-
-        # Add bidirectional edges to each pair of vertices of the face
-        adj_matrix[v0, v1] = 1
-        adj_matrix[v1, v0] = 1
-        adj_matrix[v1, v2] = 1
-        adj_matrix[v2, v1] = 1
-        adj_matrix[v2, v0] = 1
-        adj_matrix[v0, v2] = 1
-
-    return adj_matrix
-
-def L2(pred):
-    """
-    L2 penalty on the predicted node positions (sum of squared positions)
-    """
-    l2_reg = torch.sum(pred ** 2)
-    return l2_reg
-
-
-def smoothness_regularization(displacements, adj, batch):
-    """
-    Computes the smoothness regularization loss for a batch of graphs using the Laplacian.
-    The Laplacian at a vertex is the difference between the vertex displacement and
-    the average displacement of its neighbors.
-    Args:
-        displacements: Tensor of shape [num_total_nodes, 3] containing vertex displacements
-        adj: Tensor of shape [num_graphs, max_nodes, max_nodes] containing adjacency matrices
-        batch: Tensor of shape [num_total_nodes] indicating which graph each node belongs to
     Returns:
-        Scalar tensor containing the mean smoothness loss across all graphs
+        np.ndarray: Array of shape (N, 3) with spherical coordinates (r, theta, phi):
+            - r: radial distance
+            - theta: polar angle (0 to pi)
+            - phi: azimuthal angle (-pi to pi)
     """
-    num_graphs = batch.max().item() + 1
-    losses = []
+    x, y, z = cartesian_points[:, 0], cartesian_points[:, 1], cartesian_points[:, 2]
+    r = np.sqrt(x**2 + y**2 + z**2)
+    theta = np.arccos(np.clip(z / r, -1, 1))  # Handle numerical precision issues
+    phi = np.arctan2(y, x)  # Handles edge cases gracefully
+    return np.column_stack((r, theta, phi))
 
-    for i in range(num_graphs):
-        # Get mask for current graph's nodes
-        node_mask = batch == i
 
-        # Get displacements for current graph
-        graph_displacements = displacements[node_mask]  # [num_nodes_in_graph, 3]
-
-        # Get adjacency matrix for current graph
-        graph_adj = adj[i]  # [max_nodes, max_nodes]
-
-        # Trim adjacency matrix to match actual number of nodes in this graph
-        num_nodes = graph_displacements.shape[0]
-        graph_adj = graph_adj[:num_nodes, :num_nodes]  # [num_nodes, num_nodes]
-
-        # Normalize adjacency matrix
-        degree = graph_adj.sum(dim=-1, keepdim=True).clamp(min=1)  # [num_nodes, 1]
-        normalized_adj = graph_adj / degree  # [num_nodes, num_nodes]
-
-        # Compute Laplacian: L = x - Ax (where A is normalized adjacency)
-        neighbor_mean = torch.matmul(normalized_adj, graph_displacements)  # [num_nodes, 3]
-        laplacian = graph_displacements - neighbor_mean  # [num_nodes, 3]
-
-        # Compute L2 norm of Laplacian per vertex and take mean
-        loss = torch.norm(laplacian, p=2, dim=-1).mean()  # scalar
-        losses.append(loss)
-
-    return torch.stack(losses).mean()
-
-def stability_regularization(vertex_values, initial_vertex_values):
+def spherical_to_cartesian(spherical_points):
     """
-    Computes the penalty for large changes in vertex values. It requires the initial vertex values.
-    It makes the vertices less likely to have big changes.
-    """
-    return torch.mean(torch.sqrt((vertex_values**2 + initial_vertex_values**2)))
+    Convert spherical coordinates (r, theta, phi) to Cartesian coordinates.
 
-def mesh_custom_loss(
-        displaced,      # Predicted neutral vertices (full batch)
-        target,         # Initial expression vertices (full batch)
-        vertices=None,  # Initial neutral vertices (full batch)
-        edges=None,     # Initial neutral edges (full batch)
-        batch=None,     # Batch tensor (indicates which graph each node in the batch belongs to)
-        lambda_smoothness=1,
-        lambda_stability=1
+    Parameters:
+        spherical_points (np.ndarray): Array of shape (N, 3) with spherical coordinates:
+            - r: radial distance
+            - theta: polar angle (0 to pi)
+            - phi: azimuthal angle (-pi to pi)
+
+    Returns:
+        np.ndarray: Array of shape (N, 3) with Cartesian coordinates (x, y, z).
+    """
+    r, theta, phi = spherical_points[:, 0], spherical_points[:, 1], spherical_points[:, 2]
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
+    return np.column_stack((x, y, z))
+
+
+def gaussian_weight(distance, sigma):
+    """
+    Compute Gaussian weight based on distance.
+
+    Parameters:
+        distance: Angular distance in radians
+        sigma: Spread parameter controlling how quickly weight decreases with distance
+
+    Returns:
+        float: Weight between 0 and 1
+    """
+    return np.exp(-0.5 * (distance / sigma) ** 2)
+
+
+def angular_distance(theta1, phi1, theta2, phi2):
+    """
+    Compute the angular distance between two points on a unit sphere.
+    This uses the great circle distance formula (haversine formula).
+
+    Parameters:
+        theta1, theta2: polar angles (0 to pi)
+        phi1, phi2: azimuthal angles (-pi to pi)
+
+    Returns:
+        float: Angular distance in radians (0 to pi)
+    """
+    # Haversine formula for angular distance on a sphere
+    cos_distance = (np.sin(theta1) * np.sin(theta2) * np.cos(phi1 - phi2) +
+                    np.cos(theta1) * np.cos(theta2))
+    # Handle numerical precision issues
+    cos_distance = np.clip(cos_distance, -1.0, 1.0)
+    return np.arccos(cos_distance)
+def mask_face_landmarks(vertices, sigma=1):
+    sphere_center = np.mean(vertices, axis=0)
+    vertices_centered = vertices - sphere_center
+    sphere_radius = np.max(np.linalg.norm(vertices_centered, axis=1))  # Max distance of vertex from origin
+
+    # Convert the mesh points to spherical coordinates
+    mesh_spherical_points = cartesian_to_spherical(vertices_centered)
+    theta_points, phi_points = mesh_spherical_points[:, 1], mesh_spherical_points[:, 2]
+
+    # Define regions of interest on the sphere.
+    # The centers of these regions could be anywhere, they will be projected on the sphere.
+    # We will define only one region that takes the upper part of the sphere.
+    roi_centers = np.array([(0, 0, 10)])  # Only one point at z=10
+    roi_radii = [sphere_radius]  # Same radius as before, the region should cover a whole hemisphere
+
+    # Project the roi centers on the sphere and then translate to spherical coordinates
+    roi_centers_spherical = cartesian_to_spherical(roi_centers)
+    theta_roi_centers, phi_roi_centers = roi_centers_spherical[:, 1], roi_centers_spherical[:,
+                                                                      2]  # Take theta and phi of the roi centers
+
+    # Compute the actual weights
+    weights = np.zeros(vertices_centered.shape[0])
+    for theta_center, phi_center, radius in zip(theta_roi_centers, phi_roi_centers, roi_radii):
+        # For each vertex, compute its angular distance to the current ROI center
+        distances = angular_distance(
+            theta_points,
+            phi_points,
+            theta_center,
+            phi_center
+        )
+
+        # Compute weights using a Gaussian function
+        current_weights = gaussian_weight(distances, sigma)
+
+        # Add the weights for this ROI center to the total weights
+        weights += current_weights
+
+    # Normalize weights to [0, 1] range
+    if np.max(weights) > 0:  # Avoid division by zero
+        weights = weights / np.max(weights)
+
+    return weights
+
+def custom_loss(
+        pred,
+        target,
+        w_chamfer=1.0,
+        w_edge=1.0,
+        w_normal=1.0,
+        w_laplacian=1.0,
+        n_samples=5000
 ):
 
-    # Compute the actual loss (chamfer for meshes)
-    task_loss = chamfer_distance(displaced, target)
+    # Sample a set of points from the surface of each mesh.
+    # The pred Meshes object should have the normals, that we arbitrarily used to store weights
+    # for the chamfer distance. If the normals are available in the pred Meshes, use them as a mask
+    sample_target = sample_points_from_meshes(target, n_samples)  # (batch_size, n_samples, num_features)
+    sample_pred, mask = sample_points_from_meshes(pred, n_samples, return_normals=True)
 
-    # Compute regularization terms
+    mask = []
+    for idx in range(len(sample_pred)):
+        mask.append(mask_face_landmarks(sample_pred[idx].cpu().detach().numpy()))
 
-    if edges is not None and vertices is not None and batch is not None:
-        adjacency_matrix = to_dense_adj(edges, batch=batch)
-        smoothness_loss = smoothness_regularization(displaced, adjacency_matrix, batch)
-    else:
-        smoothness_loss = L2(displaced)
+    mask = torch.tensor(mask)
 
-    stability_loss = stability_regularization(displaced, vertices)
+    if mask is None:
+        mask = torch.ones_like(sample_pred)
 
-    result = task_loss + lambda_stability * stability_loss + lambda_smoothness * smoothness_loss
-    # result.requires_grad = True
+    # Select the first value of the last dimension of the mask.
+    # During creation, we arbitrarily set the weights in the normals. All the components of the
+    # normals are the same normalized weight, so we can select the first one and it will do.
+    #mask = mask[:, :, 0]
+    mask = mask.to(pred.device)
 
-    return result
+    # Get bidirectional distances. By default, chamfer_distance returns the mean of both directions.
+    # We need the two raw distances instead.
+    # dist1, dist2 = chamfer_distance(sample_pred, sample_target, return_raw=True)
+    dist1, dist2 = get_chamfer_distances(sample_pred, sample_target)
+
+    # Apply mask to both directions of the chamfer distance
+    # dist1: for each point in pred, distance to nearest point in target
+    # dist2: for each point in target, distance to nearest point in pred
+    loss_chamfer = (dist1 * mask).mean() + dist2.mean()
+
+    # Compute the chamfer loss (this is batched -> expects tensors with shape (num_graphs, max_num_vertices, 3))
+    # loss_chamfer, _ = chamfer_distance(sample_target, sample_pred)
+
+    # Compute edge loss (length of the edges)
+    loss_edge = mesh_edge_loss(pred)
+
+    # Compute consistency loss
+    loss_normal = mesh_normal_consistency(pred)
+
+    # Compute laplacian smoothing loss
+    loss_laplacian = mesh_laplacian_smoothing(pred, method="uniform")
+
+    return loss_chamfer * w_chamfer + loss_edge * w_edge + loss_normal * w_normal + loss_laplacian * w_laplacian

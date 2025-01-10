@@ -2,7 +2,7 @@ from pytorch_lightning.callbacks import Callback
 import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
-
+import torch
 from src.utils.mesh_utils import read_meshes
 
 
@@ -57,10 +57,15 @@ class RenderCallback(Callback):
         if epoch % self.n_epochs == 0:
             print(f'\nPerforming inference on neutral mesh {self.in_mesh} with prompt: \'{self.prompt}\'')
 
+            self.model.eval()
+
             meshes = read_meshes([self.in_mesh], normalize=True)
             meshes = meshes.to(pl_module.device)
-            displacements = self.model(meshes, [self.prompt])
-            pred_mesh = meshes.offset_verts(displacements)
+
+            # Use torch.no_grad() to disable gradient computation
+            with torch.no_grad():
+                displacements = self.model(meshes, [self.prompt])
+                pred_mesh = meshes.offset_verts(displacements)
 
             print('Inference completed. Performing rendering...')
 

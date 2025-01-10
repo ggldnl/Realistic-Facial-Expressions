@@ -8,7 +8,7 @@ from src.data.text_generation import DEFAULT_TEXT_GENERATION
 from src.data.datamodule import FacescapeDataModule
 from src.models.gnn.model import Model
 import src.models.gnn.config as config
-from src.models.gnn.callbacks import RenderCallback
+from src.utils.callbacks import RenderCallback
 from src.utils.renderer import Renderer
 
 if __name__ == '__main__':
