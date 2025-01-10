@@ -43,9 +43,10 @@ if __name__ == '__main__':
         n_epochs=config.RENDER_INTERVAL,
         model=model,
         renderer=Renderer(),
-        in_mesh=config.DATA_DIR / '100/models_reg/1_neutral.obj',
+        in_mesh=config.RENDER_IN,
         out_dir=config.RENDER_DIR,
         prompt=config.RENDER_PROMPT,
+        ref_mesh=config.RENDER_REF,
         distance=config.RENDER_RADIUS,
     )
 

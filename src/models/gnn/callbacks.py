@@ -19,11 +19,12 @@ class RenderCallback(Callback):
                  renderer,  # Mesh renderer
                  in_mesh,  # (Neutral) mesh to start with
                  out_dir,  # Folder where to save the results
+                 ref_mesh=None,  # Optional mesh to render below the predicted
                  prompt='smile',  # Prompt used to modify the neutral mesh during inference
 
                  # Rendering options
                  n_viewpoints=8,  # Number of renders to take
-                 distance=600,  # Distance from the center (= distance from the mesh)
+                 distance=5,  # Distance from the center (= distance from the mesh)
                  elevation=0,  # Elevation (used during rendering)
                  render_w=600,
                  render_h=800,
@@ -42,6 +43,8 @@ class RenderCallback(Callback):
         self.in_mesh = in_mesh if isinstance(in_mesh, Path) else Path(in_mesh)
         assert "neutral" in self.in_mesh.stem, "The provided file appears not to be a valid neutral mesh."
 
+        self.ref_mesh = ref_mesh if isinstance(in_mesh, Path) else Path(in_mesh)
+
         self.n_viewpoints = n_viewpoints
         self.distance = distance
         self.elevation = elevation
@@ -53,13 +56,25 @@ class RenderCallback(Callback):
         if epoch % self.n_epochs == 0:
             print(f'\nPerforming inference on neutral mesh {self.in_mesh} with prompt: \'{self.prompt}\'')
 
-            meshes = read_meshes([self.in_mesh], normalize=False)
+            meshes = read_meshes([self.in_mesh], normalize=True)
             displacements = self.model(meshes, [self.prompt])
             pred_mesh = meshes.offset_verts(displacements)
 
             print('Inference completed. Performing rendering...')
 
-            renders = self.renderer.render_viewpoints(model_in=pred_mesh,
+            neutral_renders = self.renderer.render_viewpoints(model_in=pred_mesh,
+                                                      num_views=self.n_viewpoints,
+                                                      radius=self.distance,
+                                                      elevation=self.elevation,
+                                                      scale=1.0,
+                                                      rend_size=(self.render_w, self.render_h))
+
+            expression_renders = None
+            if self.ref_mesh:
+
+                expression_meshes = read_meshes([self.ref_mesh], normalize=True)
+
+                expression_renders = self.renderer.render_viewpoints(model_in=expression_meshes,
                                                       num_views=self.n_viewpoints,
                                                       radius=self.distance,
                                                       elevation=self.elevation,
@@ -69,7 +84,12 @@ class RenderCallback(Callback):
             print('Rendering completed. Saving the result...')
 
             # Stitch together the images
-            stitched_image = np.concatenate(renders, axis=1)
+            stitched_image = np.concatenate(neutral_renders, axis=1)
+
+            if expression_renders:
+
+                stitched_expression_image = np.concatenate(expression_renders, axis=1)
+                stitched_image = np.concatenate([stitched_image, stitched_expression_image], axis=0)
 
             # Display the stitched image
             plt.figure(figsize=(12, 6))

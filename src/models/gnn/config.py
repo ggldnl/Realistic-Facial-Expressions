@@ -38,6 +38,7 @@ TEST_SPLIT = 0.1
 
 # ----------------------------------- Model ---------------------------------- #
 
+INPUT_DIM = 3
 LATENT_SIZE = 3
 
 # --------------------------------- Training --------------------------------- #
@@ -47,7 +48,9 @@ EPOCHS = 50
 PATIENCE = 20
 LEARNING_RATE = 1e-3
 RENDER_INTERVAL = 1
-RENDER_PROMPT = 'smile'
+RENDER_PROMPT = 'cheeck blowing'
+RENDER_IN = DATA_DIR / '100/models_reg/1_neutral.obj'
+RENDER_REF = DATA_DIR / '100/models_reg/17_cheek_blowing.obj'
 RENDER_RADIUS = 5
 
 # --------------------------------- Loss Weights ---------------------------- #
