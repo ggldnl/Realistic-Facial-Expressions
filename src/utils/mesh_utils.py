@@ -1,13 +1,14 @@
 from pathlib import Path
 from pytorch3d.io import load_obj
 from pytorch3d.io import load_ply
-from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.structures import Meshes
 import torch.nn.functional as F
 import pyvista as pv
 import numpy as np
 import trimesh
 import torch
+
+from meshes import WeightedMeshes
 
 
 def read_mesh(
@@ -35,12 +36,31 @@ def read_mesh(
     if obj_path.suffix not in ['.obj', '.off', '.ply']:
         raise ValueError(f"Unsupported file extension for {obj_path}.")
 
-    # Load using appropriate PyTorch3D loader based on extension
-    if obj_path.suffix == '.obj':
-        verts, faces_idx, _ = load_obj(obj_path)
-        faces = faces_idx.verts_idx
-    else:  # .ply
-        verts, faces = load_ply(obj_path)
+    verts_data = []
+    faces_data = []
+    weights_data = []
+
+    with open(obj_path, 'r') as obj_file:
+        for line in obj_file:
+            parts = line.strip().split()
+            if not parts:
+                continue
+
+            if parts[0] == 'v':  # Vertex line
+                verts_data.append([float(coord) for coord in parts[1:4]])
+            elif parts[0] == 'f':  # Face line
+                # Split face into indices, considering only the first index if multiple formats are used (e.g., v/vt/vn).
+                face = [int(part.split('/')[0]) - 1 for part in parts[1:4]]  # Convert to 0-based index.
+                faces_data.append(face)
+            elif parts[0] == 'w':  # Weights
+                weights_data.append(float(parts[1]))
+
+    verts = torch.tensor(verts_data, dtype=torch.float32)
+    faces = torch.tensor(faces_data, dtype=torch.long)
+
+    if len(weights_data) == 0:  # No weights in obj file
+        weights_data = [1] * len(verts)
+    weights = torch.tensor(weights_data, dtype=torch.float32)
 
     # Normalize if requested
     if normalize:
@@ -49,9 +69,10 @@ def read_mesh(
         verts = (verts - center) / scale
 
     # Create Meshes object
-    mesh = Meshes(
+    mesh = WeightedMeshes(
         verts=[verts],
-        faces=[faces]
+        faces=[faces],
+        weights=[weights]
     )
 
     return mesh
@@ -220,6 +241,18 @@ def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_edges=False):
             vertices = vertices.cpu().numpy()
         if isinstance(faces, torch.Tensor):
             faces = faces.cpu().numpy()
+
+    elif isinstance(mesh, WeightedMeshes):
+        if mesh.verts_padded().shape[0] != 1:
+            raise ValueError("PyTorch3D Meshes object must contain exactly one mesh.")
+
+        vertices = mesh.verts_packed().cpu().numpy()
+        faces = mesh.faces_packed().cpu().numpy()
+        weights = mesh.weights_packed().cpu().numpy()
+
+        # Create the color by repeating the weights (bw).
+        # This overrides the color provided from outside.
+        color = np.tile(weights[:, np.newaxis], (1, 3))
 
     elif isinstance(mesh, Meshes):
         if mesh.verts_padded().shape[0] != 1:

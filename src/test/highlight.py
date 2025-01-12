@@ -95,14 +95,18 @@ def angular_distance(theta1, phi1, theta2, phi2):
     return np.arccos(cos_distance)
 
 
-def add_weights_to_obj(input_obj, output_obj, weights):
+def add_weights_to_obj(input_obj, output_obj, weights, prefix='w'):
     """
-    Add weights to the OBJ file as vertex normals.
+    Add weights to the OBJ file. By default, obj files contain vertices (v),
+    faces (f), vertex normals (vn), face normals (fn); we arbitrarily weight elements (w).
+    Those elements will be ignored by pytorch3d when loading the meshes so the files can
+    still be read with the classic methods (load_obj, load_objs_as_meshes).
 
     Parameters:
         input_obj (str): Path to the input OBJ file.
         output_obj (str): Path to save the modified OBJ file.
         weights (list or np.ndarray): List or array of weights (one per vertex).
+        prefix (str): Prefix to use before the line with the weights.
     """
     with open(input_obj, 'r') as infile, open(output_obj, 'w') as outfile:
 
@@ -115,11 +119,8 @@ def add_weights_to_obj(input_obj, output_obj, weights):
             # Normalize weight to [0, 1] (if not already in range)
             weight = np.clip(weight, 0.0, 1.0)
 
-            # Use weight as grayscale color (R=G=B=weight)
-            r = g = b = weight
-
             # Write the vertex with color
-            outfile.write(f"vn {r} {g} {b}\n")
+            outfile.write(f"{prefix} {weight}\n")
 
 
 def process_dir(
@@ -205,7 +206,8 @@ if __name__ == '__main__':
     """
     Preprocess the dataset adding weights to all the mesh objects (obj) we encounter.
     We store the result in another directory, keeping the directory tree unchanged.
-    The weights are stored as vertex normals.
+    The weights are stored as a custom element (prefix=w) that will be ignored by 
+    the standard load methdos (load_obj, load_objs_as_meshes).
     """
 
     # Argument parser setup

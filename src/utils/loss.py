@@ -100,6 +100,8 @@ def angular_distance(theta1, phi1, theta2, phi2):
     # Handle numerical precision issues
     cos_distance = np.clip(cos_distance, -1.0, 1.0)
     return np.arccos(cos_distance)
+
+
 def mask_face_landmarks(vertices, sigma=1):
     sphere_center = np.mean(vertices, axis=0)
     vertices_centered = vertices - sphere_center
@@ -147,48 +149,29 @@ def custom_loss(
         pred,
         target,
         w_chamfer=1.0,
-        w_edge=1.0,
         w_normal=1.0,
         w_laplacian=1.0,
         n_samples=5000
 ):
 
     # Sample a set of points from the surface of each mesh.
-    # The pred Meshes object should have the normals, that we arbitrarily used to store weights
-    # for the chamfer distance. If the normals are available in the pred Meshes, use them as a mask
-    sample_target = sample_points_from_meshes(target, n_samples)  # (batch_size, n_samples, num_features)
-    sample_pred, mask = sample_points_from_meshes(pred, n_samples, return_normals=True)
-
-    mask = []
-    for idx in range(len(sample_pred)):
-        mask.append(mask_face_landmarks(sample_pred[idx].cpu().detach().numpy()))
-
-    mask = torch.tensor(mask)
-
-    if mask is None:
-        mask = torch.ones_like(sample_pred)
-
-    # Select the first value of the last dimension of the mask.
-    # During creation, we arbitrarily set the weights in the normals. All the components of the
-    # normals are the same normalized weight, so we can select the first one and it will do.
-    #mask = mask[:, :, 0]
-    mask = mask.to(pred.device)
+    # Along with all the sampled points we take a combination of the weights of the vertices
+    # from where the points are derived
+    target_sample, target_mask = target.sample_points(n_samples)  # (batch_size, n_samples, num_features)
+    pred_sample, pred_mask = pred.sample_points(n_samples)
 
     # Get bidirectional distances. By default, chamfer_distance returns the mean of both directions.
     # We need the two raw distances instead.
     # dist1, dist2 = chamfer_distance(sample_pred, sample_target, return_raw=True)
-    dist1, dist2 = get_chamfer_distances(sample_pred, sample_target)
+    dist1, dist2 = get_chamfer_distances(pred_sample, target_sample)
 
     # Apply mask to both directions of the chamfer distance
     # dist1: for each point in pred, distance to nearest point in target
     # dist2: for each point in target, distance to nearest point in pred
-    loss_chamfer = (dist1 * mask).mean() + dist2.mean()
+    loss_chamfer = (dist1 * pred_mask).mean() + (dist2 * target_mask).mean()
 
     # Compute the chamfer loss (this is batched -> expects tensors with shape (num_graphs, max_num_vertices, 3))
     # loss_chamfer, _ = chamfer_distance(sample_target, sample_pred)
-
-    # Compute edge loss (length of the edges)
-    loss_edge = mesh_edge_loss(pred)
 
     # Compute consistency loss
     loss_normal = mesh_normal_consistency(pred)
@@ -196,4 +179,4 @@ def custom_loss(
     # Compute laplacian smoothing loss
     loss_laplacian = mesh_laplacian_smoothing(pred, method="uniform")
 
-    return loss_chamfer * w_chamfer + loss_edge * w_edge + loss_normal * w_normal + loss_laplacian * w_laplacian
+    return loss_chamfer * w_chamfer + loss_normal * w_normal + loss_laplacian * w_laplacian

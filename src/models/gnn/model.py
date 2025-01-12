@@ -64,7 +64,6 @@ class Model(pl.LightningModule):
                  lr=1e-3,
                  batch_size=4,
                  w_chamfer=1.0,
-                 w_edge=1.0,
                  w_normal=1.0,
                  w_laplacian=1.0,
                  n_samples=5000
@@ -78,7 +77,6 @@ class Model(pl.LightningModule):
 
         # Loss weights
         self.w_chamfer = w_chamfer
-        self.w_edge = w_edge
         self.w_normal = w_normal
         self.w_laplacian = w_laplacian
         self.n_samples = n_samples
@@ -109,6 +107,7 @@ class Model(pl.LightningModule):
         text_condition_per_subgraph = text_condition[mesh_idx_per_vertex]
 
         # Ensure all tensors are on the same device
+        # TODO remove .to(device) once we are sure everything works
         neutral_meshes_vertices_packed = neutral_meshes_vertices_packed.to(self.device)
         neutral_meshes_edges_packed = neutral_meshes_edges_packed.to(self.device)
         text_condition_per_subgraph = text_condition_per_subgraph.to(self.device)
@@ -128,17 +127,12 @@ class Model(pl.LightningModule):
 
         # Nodes with updated features that will become offsets with training
         displacements = self(neutral_meshes, descriptions)
-
-        # Create a new mesh by summing the offsets
-        weights_backup = neutral_meshes.verts_normals_packed().clone()
         predicted_meshes = neutral_meshes.offset_verts(displacements)  # returns new object
-        predicted_meshes._verts_normals_packed = weights_backup
 
         loss = self.loss_fn(
             predicted_meshes,
             expression_meshes,
             w_chamfer=self.w_chamfer,
-            w_edge=self.w_edge,
             w_normal=self.w_normal,
             w_laplacian=self.w_laplacian,
             n_samples=self.n_samples
