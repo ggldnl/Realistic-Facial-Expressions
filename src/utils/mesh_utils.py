@@ -91,25 +91,35 @@ def read_meshes(meshes, normalize=False):
 
     all_verts = []
     all_faces = []
-    all_normals = []
+    all_weights = []
 
     for obj_path in meshes:
 
-        if isinstance(obj_path, str):
-            obj_path = Path(obj_path)
+        verts_data = []
+        faces_data = []
+        weights_data = []
 
-        # Validate file extension
-        if obj_path.suffix not in ['.obj', '.off', '.ply']:
-            raise ValueError(f"Unsupported file extension for {obj_path}.")
+        with open(obj_path, 'r') as obj_file:
+            for line in obj_file:
+                parts = line.strip().split()
+                if not parts:
+                    continue
 
-        # Load using appropriate PyTorch3D loader based on extension
-        if obj_path.suffix == '.obj':
-            verts, faces, aux = load_obj(obj_path)
-            faces = faces.verts_idx
-            normals = aux.normals
-        else:  # .ply
-            verts, faces = load_ply(obj_path)
-            normals = None
+                if parts[0] == 'v':  # Vertex line
+                    verts_data.append([float(coord) for coord in parts[1:4]])
+                elif parts[0] == 'f':  # Face line
+                    # Split face into indices, considering only the first index if multiple formats are used (e.g., v/vt/vn).
+                    face = [int(part.split('/')[0]) - 1 for part in parts[1:4]]  # Convert to 0-based index.
+                    faces_data.append(face)
+                elif parts[0] == 'w':  # Weights
+                    weights_data.append(float(parts[1]))
+
+        verts = torch.tensor(verts_data, dtype=torch.float32)
+        faces = torch.tensor(faces_data, dtype=torch.long)
+
+        if len(weights_data) == 0:  # No weights in obj file
+            weights_data = [1] * len(verts)
+        weights = torch.tensor(weights_data, dtype=torch.float32)
 
         # Normalize if requested
         if normalize:
@@ -119,10 +129,10 @@ def read_meshes(meshes, normalize=False):
 
         all_verts.append(verts)
         all_faces.append(faces)
-        all_normals.append(normals)
+        all_weights.append(weights)
 
     # Create a Meshes object
-    meshes = Meshes(verts=all_verts, faces=all_faces, verts_normals=all_normals)
+    meshes = WeightedMeshes(verts=all_verts, faces=all_faces, weights=all_weights)
 
     return meshes
 
