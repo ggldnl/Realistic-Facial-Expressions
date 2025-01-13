@@ -28,6 +28,8 @@ if __name__ == '__main__':
     )
 
     # Restore the model
+    # TODO
+    model = Model.load_from_checkpoint(...)
 
     # Perform inference
     output_mesh = model.inference(input_meshes, descriptions)
