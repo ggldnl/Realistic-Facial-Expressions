@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch
 
 from src.utils.loss import custom_loss
+from src.utils.loss import hausdorff_distance
+from src.utils.loss import chamfer_distance
 from src.utils.meshes import WeightedMeshes
 
 
@@ -156,9 +158,19 @@ class Model(pl.LightningModule):
 
         return predicted_meshes, loss
 
-    def compute_metrics(self, pred, batch):
-        # TODO
-        pass
+    def compute_metrics(self, pred, target):
+
+        # Compute the metrices
+        chamfer = chamfer_distance(pred, target)
+        hausdorff = hausdorff_distance(pred, target)
+
+        # Collect all metrics in a dictionary
+        metrics = {
+            'Chamfer Distance': chamfer,
+            'Hausdorff Distance': hausdorff,
+        }
+
+        return metrics
 
     def training_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)

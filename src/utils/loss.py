@@ -1,7 +1,44 @@
 from pytorch3d.ops import knn_points
 from pytorch3d.loss import mesh_laplacian_smoothing
 from pytorch3d.loss import mesh_normal_consistency
+from pytorch3d.loss import chamfer_distance as mesh_chamfer_distance
 import numpy as np
+import torch
+
+
+def hausdorff_distance(pred, target, num_samples: int = 5000) -> torch.Tensor:
+    """
+    Compute the Hausdorff distance between two meshes using sampled points.
+
+    Parameters:
+        pred (WeightedMeshes): The predicted mesh.
+        target (WeightedMeshes): The target mesh.
+        num_samples (int): Number of points to sample from each mesh.
+
+    Returns:
+        torch.Tensor: The Hausdorff distance.
+    """
+
+    # Sample points from both meshes
+    pred_points, _ = pred.sample_points(num_samples)
+    target_points, _ = target.sample_points(num_samples)
+
+    # Compute the distance from pred to target
+    dists_pred_to_target = torch.cdist(pred_points, target_points)  # [num_samples_pred, num_samples_target]
+    min_dists_pred_to_target = torch.min(dists_pred_to_target, dim=1)[0]  # Min distance for each pred point
+
+    # Compute the distance from target to pred
+    dists_target_to_pred = torch.cdist(target_points, pred_points)  # [num_samples_target, num_samples_pred]
+    min_dists_target_to_pred = torch.min(dists_target_to_pred, dim=1)[0]  # Min distance for each target point
+
+    # Hausdorff distance: max of the minimum distances
+    hausdorff_dist = torch.max(
+        torch.max(min_dists_pred_to_target),  # Max of min distances from pred to target
+        torch.max(min_dists_target_to_pred),  # Max of min distances from target to pred
+    )
+
+    return hausdorff_dist
+
 
 def get_chamfer_distances(pred, target):
 
@@ -23,6 +60,37 @@ def get_chamfer_distances(pred, target):
     dist2 = nearest_target.dists.squeeze(-1)  # Shape: (batch_size, n_samples)
 
     return dist1, dist2
+
+
+def chamfer_distance(pred, target, n_samples=5000):
+
+    target_sample, _ = target.sample_points(n_samples)
+    pred_sample, _ = pred.sample_points(n_samples)
+
+    loss_chamfer = mesh_chamfer_distance(target_sample, pred_sample)
+
+    return loss_chamfer
+
+
+def weighted_chamfer_distance(pred, target, n_samples=5000):
+
+    # Sample a set of points from the surface of each mesh.
+    # Along with all the sampled points we take a combination of the weights of the vertices
+    # from where the points are derived
+    target_sample, target_mask = target.sample_points(n_samples)  # (batch_size, n_samples, num_features)
+    pred_sample, pred_mask = pred.sample_points(n_samples)
+
+    # Get bidirectional distances. By default, chamfer_distance returns the mean of both directions.
+    # We need the two raw distances instead.
+    # dist1, dist2 = chamfer_distance(sample_pred, sample_target, return_raw=True)
+    dist1, dist2 = get_chamfer_distances(pred_sample, target_sample)
+
+    # Apply mask to both directions of the chamfer distance
+    # dist1: for each point in pred, distance to nearest point in target
+    # dist2: for each point in target, distance to nearest point in pred
+    loss_chamfer = (dist1 * pred_mask).mean() + (dist2 * target_mask).mean()
+
+    return loss_chamfer
 
 
 def cartesian_to_spherical(cartesian_points):
@@ -151,21 +219,8 @@ def custom_loss(
         n_samples=5000
 ):
 
-    # Sample a set of points from the surface of each mesh.
-    # Along with all the sampled points we take a combination of the weights of the vertices
-    # from where the points are derived
-    target_sample, target_mask = target.sample_points(n_samples)  # (batch_size, n_samples, num_features)
-    pred_sample, pred_mask = pred.sample_points(n_samples)
-
-    # Get bidirectional distances. By default, chamfer_distance returns the mean of both directions.
-    # We need the two raw distances instead.
-    # dist1, dist2 = chamfer_distance(sample_pred, sample_target, return_raw=True)
-    dist1, dist2 = get_chamfer_distances(pred_sample, target_sample)
-
-    # Apply mask to both directions of the chamfer distance
-    # dist1: for each point in pred, distance to nearest point in target
-    # dist2: for each point in target, distance to nearest point in pred
-    loss_chamfer = (dist1 * pred_mask).mean() + (dist2 * target_mask).mean()
+    # Compute the weighted version of the chamfer distance
+    loss_chamfer = weighted_chamfer_distance(pred, target, n_samples=n_samples)
 
     # Compute the chamfer loss (this is batched -> expects tensors with shape (num_graphs, max_num_vertices, 3))
     # loss_chamfer, _ = chamfer_distance(sample_target, sample_pred)
