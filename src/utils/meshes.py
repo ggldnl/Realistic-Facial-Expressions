@@ -72,7 +72,7 @@ class WeightedMeshes(Meshes):
             return
 
         weights_list_to_packed = list_to_packed(self._weights_list)
-        self._weights_packed = weights_list_to_packed[0]
+        self._weights_packed = weights_list_to_packed[0].to(self.device)
 
     def _compute_padded(self, refresh: bool = False):
         """Compute padded representation of weights."""

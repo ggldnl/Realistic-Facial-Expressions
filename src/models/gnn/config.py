@@ -19,7 +19,7 @@ CHECKPOINT_DIR = Path(MODEL_DIR, 'data/checkpoints')
 
 # ------------------------------- Preprocessing ------------------------------ #
 
-MESH_DROP_PERCENTAGE = 0.8  # Drop 80% of the mesh
+MESH_DROP_PERCENTAGE = None
 
 # ---------------------------------- Dataset --------------------------------- #
 
@@ -43,8 +43,8 @@ TEST_SPLIT = 0.1
 
 # ----------------------------------- Model ---------------------------------- #
 
+LATENT_SIZE = 128
 INPUT_DIM = 3
-LATENT_SIZE = 3
 
 # --------------------------------- Training --------------------------------- #
 

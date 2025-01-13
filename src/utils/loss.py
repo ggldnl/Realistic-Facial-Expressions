@@ -67,7 +67,7 @@ def chamfer_distance(pred, target, n_samples=5000):
     target_sample, _ = target.sample_points(n_samples)
     pred_sample, _ = pred.sample_points(n_samples)
 
-    loss_chamfer = mesh_chamfer_distance(target_sample, pred_sample)
+    loss_chamfer, _ = mesh_chamfer_distance(target_sample, pred_sample)
 
     return loss_chamfer
 

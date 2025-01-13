@@ -7,13 +7,11 @@ import torch
 from src.utils.loss import custom_loss
 from src.utils.loss import hausdorff_distance
 from src.utils.loss import chamfer_distance
-from src.utils.meshes import WeightedMeshes
 
 
 class TextEncoder(pl.LightningModule):
 
     def __init__(self, d_out, hidden_dim=None):
-
         super().__init__()
 
         # Create the text transformer
@@ -40,7 +38,6 @@ class TextEncoder(pl.LightningModule):
             p.requires_grad = False
 
     def forward(self, x):
-
         # Pass the text to the tokenizer and get a dictionary containing a tensor as result
         model_input = self.tokenizer(x, return_tensors="pt", padding=True, truncation=True)
         model_input = {k: v.to(self.device) for k, v in model_input.items()}
@@ -48,11 +45,7 @@ class TextEncoder(pl.LightningModule):
         # Give the tensor to the model and take  the last hidden state
         model_output = self.text_model(**model_input)
         last_hidden_states = model_output.last_hidden_state
-
-        # Extract CLS token representation
         features = last_hidden_states[:, 0, :]
-
-        # Project the last hidden state to the new embedding space
         projected_vec = self.projection(features)
 
         # Normalize
@@ -84,61 +77,79 @@ class Model(pl.LightningModule):
         self.w_laplacian = w_laplacian
         self.n_samples = n_samples
 
-        # Define the architecture
-        self.gcn1 = GCNConv(self.input_dim, self.latent_size)
-        self.gcn2 = GCNConv(self.latent_size, self.input_dim)
+        assert self.latent_size / 2 >= self.input_dim, \
+            "Latent size must be greater (at least double) than input dimension"
+
+        # Encoder layers
+        self.gcn_encoder = nn.ModuleList([
+            GCNConv(self.input_dim, int(self.latent_size / 2)),
+            GCNConv(int(self.latent_size / 2), self.latent_size)
+        ])
+
+        # Text encoder
         self.text_encoder = TextEncoder(self.latent_size)
 
-        # Define the loss function
+        # Fusion module
+        self.fusion = nn.Sequential(
+            nn.Linear(self.latent_size * 2, self.latent_size),
+            nn.ReLU(),
+            nn.Linear(self.latent_size, self.latent_size)
+        )
+
+        # Decoder layers with residual connections
+        self.gcn_decoder = nn.ModuleList([
+            GCNConv(self.latent_size, self.latent_size),
+            GCNConv(self.latent_size, self.latent_size)
+        ])
+
+        # Final projection to get vertex offsets
+        self.offset_proj = nn.Linear(self.latent_size, self.input_dim)
+
+        # Activation functions
+        self.activation = nn.LeakyReLU(0.2)
+
         self.loss_fn = custom_loss
 
         self.save_hyperparameters()
 
     def forward(self, neutral_meshes, descriptions):
-        # Ensure meshes are on the correct device
-        neutral_meshes = neutral_meshes.to(self.device)
+        # Get packed representations
+        vertices = neutral_meshes.verts_packed()
+        edges = neutral_meshes.edges_packed().T
 
-        # Get a packed representation of the meshes
-        neutral_meshes_vertices_packed = neutral_meshes.verts_packed()
-        neutral_meshes_edges_packed = neutral_meshes.edges_packed().T
+        # Encode mesh
+        x = vertices
+        for gcn in self.gcn_encoder:
+            x = self.activation(gcn(x, edges))
+        mesh_features = x
 
-        # Text conditioning
-        text_condition = self.text_encoder(descriptions)  # (batch_size, latent_space)
-
-        # We can use neutral_graph.batch to sum each text condition to the respective subgraph in the batch
+        # Encode text
+        text_features = self.text_encoder(descriptions)
         mesh_idx_per_vertex = neutral_meshes.verts_packed_to_mesh_idx()
-        text_condition_per_subgraph = text_condition[mesh_idx_per_vertex]
+        text_features = text_features[mesh_idx_per_vertex]
 
-        # Ensure all tensors are on the same device
-        # TODO remove .to(device) once we are sure everything works
-        neutral_meshes_vertices_packed = neutral_meshes_vertices_packed.to(self.device)
-        neutral_meshes_edges_packed = neutral_meshes_edges_packed.to(self.device)
-        text_condition_per_subgraph = text_condition_per_subgraph.to(self.device)
+        # Fuse features
+        concat_features = torch.cat([mesh_features, text_features], dim=-1)
+        fused_features = self.fusion(concat_features)
 
-        x = self.gcn1(neutral_meshes_vertices_packed, neutral_meshes_edges_packed)
-        x = x + text_condition_per_subgraph  # Add text conditioning
-        x = torch.relu(x)
-        x = self.gcn2(x, neutral_meshes_edges_packed)
+        # Decode with residual connections
+        x = fused_features
+        for gcn in self.gcn_decoder:
+            x_new = self.activation(gcn(x, edges))
+            x = x + x_new  # Residual connection
 
-        return x
+        # Project to offset space
+        offsets = self.offset_proj(x)
 
-    def inference(self, neutral_meshes, descriptions):
-        displacements = self(neutral_meshes, descriptions)
-        expression_meshes = neutral_meshes.offset_verts(displacements)
-        return WeightedMeshes(
-            expression_meshes.verts_list(),
-            neutral_meshes.faces_list(),
-            neutral_meshes.weights_list()
-        )
+        return offsets
 
     def common_step(self, batch):
-        # Move batch data to device
         neutral_meshes = batch['neutral_meshes'].to(self.device)
         expression_meshes = batch['expression_meshes'].to(self.device)
         descriptions = batch['descriptions']
 
-        # Nodes with updated features that will become offsets with training
         displacements = self(neutral_meshes, descriptions)
+
         predicted_meshes = neutral_meshes.offset_verts(displacements)  # returns new object
 
         loss = self.loss_fn(
@@ -150,55 +161,39 @@ class Model(pl.LightningModule):
             n_samples=self.n_samples
         )
 
-        self.log("disp_mean",
-                 torch.abs(displacements).mean().item(),
-                 batch_size=self.batch_size,
-                 prog_bar=True,
+        self.log("loss", loss.item(), batch_size=self.batch_size, prog_bar=True, logger=True)
+        self.log("disp_mean", torch.abs(displacements).mean().item(), batch_size=self.batch_size, prog_bar=True,
                  logger=True)
 
         return predicted_meshes, loss
 
-    def compute_metrics(self, pred, target):
-
-        # Compute the metrices
+    def compute_metrics(self, pred, target, stage='train'):
         chamfer = chamfer_distance(pred, target)
         hausdorff = hausdorff_distance(pred, target)
 
-        # Collect all metrics in a dictionary
-        metrics = {
-            'Chamfer Distance': chamfer,
-            'Hausdorff Distance': hausdorff,
-        }
+        self.log(f'{stage}_Chamfer', chamfer.item(), batch_size=self.batch_size, prog_bar=True, logger=True)
+        self.log(f'{stage}_Hausdorff', hausdorff.item(), batch_size=self.batch_size, prog_bar=True, logger=True)
 
-        return metrics
+    def inference(self, neutral_meshes, descriptions):
+        displacements = self(neutral_meshes, descriptions)
+        expression_meshes = neutral_meshes.offset_verts(displacements)
+        return expression_meshes
 
     def training_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.compute_metrics(pred, batch)
-        self.log("train_loss",
-                 loss,
-                 batch_size=self.batch_size,
-                 prog_bar=True,
-                 logger=True)
+        self.compute_metrics(pred, batch['expression_meshes'], stage='train')
+        self.log("train_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.compute_metrics(pred, batch)
-        self.log("val_loss",
-                 loss,
-                 batch_size=self.batch_size,
-                 prog_bar=True,
-                 logger=True)
+        self.compute_metrics(pred, batch['expression_meshes'], stage='validation')
+        self.log("val_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.log("test_loss",
-                 loss,
-                 batch_size=self.batch_size,
-                 prog_bar=True,
-                 logger=True)
+        self.log("test_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def configure_optimizers(self):

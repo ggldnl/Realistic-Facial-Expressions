@@ -4,7 +4,7 @@ from src.utils.mesh_utils import visualize_mesh
 from src.utils.mesh_utils import read_meshes
 from src.models.gnn.model import Model
 from src.models.gnn import config
-
+import torch
 
 if __name__ == '__main__':
 
@@ -17,7 +17,6 @@ if __name__ == '__main__':
 
     input_meshes = read_meshes([args.mesh])
     descriptions = [args.text]
-    output_path = args.output
 
     """
     # Create the model
@@ -29,12 +28,12 @@ if __name__ == '__main__':
     """
 
     # Restore the model
-    # TODO
-    checkpoint_dir = config.CHECKPOINT_DIR
-    model = Model.load_from_checkpoint(checkpoint_dir)
+    checkpoint_path = config.CHECKPOINT_DIR / "gnn-epoch=19-val_loss=0.0298.ckpt"
+    model = Model.load_from_checkpoint(checkpoint_path)
 
+    model.eval()
     # Perform inference
-    output_mesh = model.inference(input_meshes, descriptions)
+    output_mesh = model.inference(input_meshes.to("cuda" if torch.cuda.is_available() else "cpu"), descriptions)
 
     # Visualize the result
     visualize_mesh(output_mesh)
