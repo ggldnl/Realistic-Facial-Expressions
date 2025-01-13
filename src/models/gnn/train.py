@@ -1,9 +1,8 @@
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 import pytorch_lightning as pl
 
 from src.data.text_generation import DEFAULT_TEXT_GENERATION
-
 from src.data.datamodule import FacescapeDataModule
 from src.models.gnn.model import Model
 import src.models.gnn.config as config
@@ -24,7 +23,7 @@ if __name__ == '__main__':
         last_subject=config.LAST_SUBJECT_INDEX
     )
 
-    # Log to tensorboard
+    # Log to TensorBoard
     logger = TensorBoardLogger(config.LOG_DIR, name="GNN")
 
     # Create the model
@@ -51,11 +50,20 @@ if __name__ == '__main__':
     )
 
     early_stop_callback = EarlyStopping(
+        monitor='val_loss',
+        min_delta=0.001,
+        patience=config.PATIENCE,
+        verbose=True,
+        mode='min'
+    )
+
+    # Add ModelCheckpoint callback
+    checkpoint_callback = ModelCheckpoint(
         monitor='val_loss',  # Metric to monitor
-        min_delta=0.001,  # Minimum change to qualify as an improvement
-        patience=config.PATIENCE,  # Number of epochs with no improvement after which training will be stopped
-        verbose=True,  # Whether to print logs to stdout
-        mode='min'  # 'min' mode means training will stop when the quantity monitored stops decreasing
+        dirpath=config.CHECKPOINT_DIR,  # Directory to save checkpoints
+        filename='gnn-{epoch:02d}-{val_loss:.4f}',  # Filename format
+        save_top_k=3,  # Save the top 3 models with the lowest val_loss
+        mode='min'  # Minimize val_loss
     )
 
     trainer = pl.Trainer(
@@ -63,9 +71,9 @@ if __name__ == '__main__':
         logger=logger,
         accelerator='auto',
         callbacks=[
-            #TQDMProgressBar(refresh_rate=20),
             early_stop_callback,
-            render_callback
+            render_callback,
+            checkpoint_callback
         ]
     )
 

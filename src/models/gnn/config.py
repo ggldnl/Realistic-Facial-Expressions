@@ -15,6 +15,7 @@ MODEL_DIR = Path(ROOT_DIR, 'src/models/gnn')
 # Where to put renderings and logs
 RENDER_DIR = Path(MODEL_DIR, 'data/renders')
 LOG_DIR = Path(MODEL_DIR, 'data/logs')
+CHECKPOINT_DIR = Path(MODEL_DIR, 'data/checkpoints')
 
 # ------------------------------- Preprocessing ------------------------------ #
 
