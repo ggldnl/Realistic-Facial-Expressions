@@ -23,13 +23,17 @@ MESH_DROP_PERCENTAGE = 0.8  # Drop 80% of the mesh
 # ---------------------------------- Dataset --------------------------------- #
 
 # URL that identifies where to download the data from
-RESOURCE_URL = r"https://drive.google.com/drive/folders/14aQeK7S35FP5Z9EkJ6e6TCZLQxCYRJZE?usp=drive_link"
+# RESOURCE_URL = r"https://drive.google.com/file/d/1owzGMup14KBclXstg4dQh91PfQo2kDsV/view?usp=sharing"  # 1-100 preprocessed
+RESOURCE_URL = r"https://drive.google.com/file/d/1Ajk8hCGI_bcT5dYmb4H1Srw1eOJ-ykaa/view?usp=sharing"  # 100
 
 # The URL can point to google drive, author's website and so on
 DOWNLOAD_SOURCE = 'drive'
 
 # Download, skip or check if all the files are there before downloading
 DOWNLOAD = 'infer'
+
+FIRST_SUBJECT_INDEX = 1
+LAST_SUBJECT_INDEX = 100
 
 # Splitting percentage
 TRAIN_SPLIT = 0.8
