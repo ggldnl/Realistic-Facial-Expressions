@@ -1,9 +1,6 @@
-from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.ops import knn_points
-from pytorch3d.loss import mesh_edge_loss
 from pytorch3d.loss import mesh_laplacian_smoothing
 from pytorch3d.loss import mesh_normal_consistency
-import torch
 import numpy as np
 
 def get_chamfer_distances(pred, target):
