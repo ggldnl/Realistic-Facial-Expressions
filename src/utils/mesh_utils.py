@@ -1,6 +1,5 @@
 from pathlib import Path
 from pytorch3d.io import load_obj
-from pytorch3d.io import load_ply
 from pytorch3d.structures import Meshes
 import torch.nn.functional as F
 import pyvista as pv
@@ -8,7 +7,7 @@ import numpy as np
 import trimesh
 import torch
 
-from meshes import WeightedMeshes
+from src.utils.meshes import WeightedMeshes
 
 
 def read_mesh(
