@@ -1,0 +1,11 @@
+gdown
+huggingface-hub
+kaggle
+pyvista
+pyyaml
+tensorboard
+tensorboardx
+termcolor
+transformers
+wandb
+git+https://github.com/facebookresearch/pytorch3d.git@stable

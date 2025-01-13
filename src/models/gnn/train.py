@@ -11,7 +11,8 @@ from src.utils.renderer import Renderer
 
 if __name__ == '__main__':
 
-    # Create a datamodule
+    torch.set_float32_matmul_precision('medium')
+
     datamodule = FacescapeDataModule(
         resource_url=config.RESOURCE_URL,
         download_source=config.DOWNLOAD_SOURCE,
@@ -23,10 +24,10 @@ if __name__ == '__main__':
         last_subject=config.LAST_SUBJECT_INDEX
     )
 
-    # Log to TensorBoard
+
     logger = TensorBoardLogger(config.LOG_DIR, name="GNN")
 
-    # Create the model
+
     model = Model(
         latent_size=config.LATENT_SIZE,
         input_dim=config.INPUT_DIM,
