@@ -247,17 +247,17 @@ def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_edges=False):
         faces = mesh["faces"]
 
         if isinstance(vertices, torch.Tensor):
-            vertices = vertices.cpu().numpy()
+            vertices = vertices.cpu().detach().numpy()
         if isinstance(faces, torch.Tensor):
-            faces = faces.cpu().numpy()
+            faces = faces.cpu().detach().numpy()
 
     elif isinstance(mesh, WeightedMeshes):
         if mesh.verts_padded().shape[0] != 1:
             raise ValueError("PyTorch3D Meshes object must contain exactly one mesh.")
 
-        vertices = mesh.verts_packed().cpu().numpy()
-        faces = mesh.faces_packed().cpu().numpy()
-        weights = mesh.weights_packed().cpu().numpy()
+        vertices = mesh.verts_packed().cpu().detach().numpy()
+        faces = mesh.faces_packed().cpu().detach().numpy()
+        weights = mesh.weights_packed().cpu().detach().numpy()
 
         # Create the color by repeating the weights (bw).
         # This overrides the color provided from outside.
@@ -267,8 +267,8 @@ def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_edges=False):
         if mesh.verts_padded().shape[0] != 1:
             raise ValueError("PyTorch3D Meshes object must contain exactly one mesh.")
 
-        vertices = mesh.verts_packed().cpu().numpy()
-        faces = mesh.faces_packed().cpu().numpy()
+        vertices = mesh.verts_packed().cpu().detach().numpy()
+        faces = mesh.faces_packed().detach().cpu().numpy()
 
     elif isinstance(mesh, trimesh.Trimesh):
         vertices = mesh.vertices
@@ -277,9 +277,9 @@ def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_edges=False):
     elif isinstance(mesh, tuple) and len(mesh) == 2:
         vertices, faces = mesh
         if isinstance(vertices, torch.Tensor):
-            vertices = vertices.cpu().numpy()
+            vertices = vertices.cpu().detach().numpy()
         if isinstance(faces, torch.Tensor):
-            faces = faces.cpu().numpy()
+            faces = faces.cpu().detach().numpy()
 
     else:
         raise TypeError("Unsupported mesh type. Must be dict, tuple, PyTorch3D Meshes, or trimesh.Trimesh.")

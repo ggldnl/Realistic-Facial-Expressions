@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch
 
 from src.utils.loss import custom_loss
+from src.utils.meshes import WeightedMeshes
 
 
 class TextEncoder(pl.LightningModule):
@@ -118,6 +119,15 @@ class Model(pl.LightningModule):
         x = self.gcn2(x, neutral_meshes_edges_packed)
 
         return x
+
+    def inference(self, neutral_meshes, descriptions):
+        displacements = self(neutral_meshes, descriptions)
+        expression_meshes = neutral_meshes.offset_verts(displacements)
+        return WeightedMeshes(
+            expression_meshes.verts_list(),
+            neutral_meshes.faces_list(),
+            neutral_meshes.weights_list()
+        )
 
     def common_step(self, batch):
         # Move batch data to device
