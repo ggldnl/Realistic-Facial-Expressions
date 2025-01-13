@@ -33,7 +33,6 @@ if __name__ == '__main__':
         lr=config.LEARNING_RATE,
         batch_size=config.BATCH_SIZE,
         w_chamfer=config.W_CHAMFER,
-        w_edge=config.W_EDGE,
         w_normal=config.W_NORMAL,
         w_laplacian=config.W_LAPLACIAN,
         n_samples=config.N_SAMPLES
