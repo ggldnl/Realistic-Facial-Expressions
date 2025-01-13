@@ -53,7 +53,7 @@ def extract_zip(zip_path, directory):
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(directory)
 
-        print(f"Extraction of {zip_path} to {directory} completed successfully.")
+        print(f"Extraction of {zip_path} to {directory} completed.")
     except FileNotFoundError:
         print(f"The file {zip_path} does not exist.")
     except zipfile.BadZipFile:

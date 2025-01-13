@@ -78,6 +78,8 @@ class FacescapeDataModule(pl.LightningDataModule):
             train_split: float = 0.8,
             val_split: float = 0.1,
             normalize: bool = False,
+            first_subject: int = 1,
+            last_subject: int = 100,
             custom_collate=collate_meshes
     ):
         """
@@ -111,8 +113,10 @@ class FacescapeDataModule(pl.LightningDataModule):
         self.custom_collate = custom_collate
 
         # Default required files structure
+        self.first_subject = first_subject
+        self.last_subject = last_subject
         self.required_files = [
-            Path(self.data_dir, f'{i}', 'models_reg') for i in [-2, 100]
+            Path(self.data_dir, f'{i}', 'models_reg') for i in range(first_subject, last_subject + 1)
         ]
 
         self.data = None
@@ -135,7 +139,7 @@ class FacescapeDataModule(pl.LightningDataModule):
                 self.download = 'yes'
 
         if self.download == 'yes':
-            zip_path = Path(self.data_dir, 'datamodule.zip')
+            zip_path = Path(self.data_dir, 'data.zip')
             print('Downloading resource...')
 
             if self.download_source == 'drive':
@@ -268,7 +272,9 @@ if __name__ == '__main__':
         data_dir=config.DATA_DIR,
         batch_size=config.BATCH_SIZE,
         download=config.DOWNLOAD,
-        text_generation=DEFAULT_TEXT_GENERATION
+        text_generation=DEFAULT_TEXT_GENERATION,
+        first_subject=config.FIRST_SUBJECT_INDEX,
+        last_subject=config.LAST_SUBJECT_INDEX
     )
 
     datamodule.prepare_data()

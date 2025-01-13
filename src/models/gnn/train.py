@@ -1,4 +1,3 @@
-from pytorch_lightning.callbacks.progress import TQDMProgressBar
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 import pytorch_lightning as pl
@@ -21,6 +20,8 @@ if __name__ == '__main__':
         download=config.DOWNLOAD,
         text_generation=DEFAULT_TEXT_GENERATION,
         batch_size=config.BATCH_SIZE,
+        first_subject=config.FIRST_SUBJECT_INDEX,
+        last_subject=config.LAST_SUBJECT_INDEX
     )
 
     # Log to tensorboard
