@@ -1,19 +1,17 @@
 from transformers import DistilBertModel, DistilBertTokenizer
 from torch_geometric.nn import GCNConv
-from torch_geometric.data import Data
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
 
-from src.utils.renderer import Renderer
-
-from src.utils.loss import mesh_custom_loss
+from src.utils.loss import custom_loss
+from src.utils.loss import hausdorff_distance
+from src.utils.loss import chamfer_distance
 
 
 class TextEncoder(pl.LightningModule):
 
     def __init__(self, d_out, hidden_dim=None):
-
         super().__init__()
 
         # Create the text transformer
@@ -40,7 +38,6 @@ class TextEncoder(pl.LightningModule):
             p.requires_grad = False
 
     def forward(self, x):
-
         # Pass the text to the tokenizer and get a dictionary containing a tensor as result
         model_input = self.tokenizer(x, return_tensors="pt", padding=True, truncation=True)
         model_input = {k: v.to(self.device) for k, v in model_input.items()}
@@ -48,26 +45,25 @@ class TextEncoder(pl.LightningModule):
         # Give the tensor to the model and take  the last hidden state
         model_output = self.text_model(**model_input)
         last_hidden_states = model_output.last_hidden_state
-
-        # Extract CLS token representation
         features = last_hidden_states[:, 0, :]
-
-        # Project the last hidden state to the new embedding space
         projected_vec = self.projection(features)
 
         # Normalize
         projection_len = torch.norm(projected_vec, dim=-1, keepdim=True)
         return projected_vec / projection_len
 
-class Model(pl.LightningModule):
 
+class Model(pl.LightningModule):
     def __init__(self,
                  latent_size,
                  input_dim=3,
                  lr=1e-3,
                  batch_size=4,
+                 w_chamfer=1.0,
+                 w_normal=1.0,
+                 w_laplacian=1.0,
+                 n_samples=5000
                  ):
-
         super().__init__()
 
         self.latent_size = latent_size
@@ -75,117 +71,129 @@ class Model(pl.LightningModule):
         self.lr = lr
         self.batch_size = batch_size
 
-        # Define the architecture
-        self.gcn1 = GCNConv(self.input_dim, self.latent_size)
-        self.gcn2 = GCNConv(self.latent_size, self.input_dim)
+        # Loss weights
+        self.w_chamfer = w_chamfer
+        self.w_normal = w_normal
+        self.w_laplacian = w_laplacian
+        self.n_samples = n_samples
+
+        assert self.latent_size / 2 >= self.input_dim, \
+            "Latent size must be greater (at least double) than input dimension"
+
+        # Encoder layers
+        self.gcn_encoder = nn.ModuleList([
+            GCNConv(self.input_dim, int(self.latent_size / 2)),
+            GCNConv(int(self.latent_size / 2), self.latent_size)
+        ])
+
+        # Text encoder
         self.text_encoder = TextEncoder(self.latent_size)
 
-        self.renderer = Renderer()
-
-        # Define the loss function
-        self.loss_fn = mesh_custom_loss
-
-    def forward(self, neutral_graph, descriptions):
-
-        # Text conditioning
-        text_condition = self.text_encoder(descriptions)
-
-        # We can use neutral_graph.batch to sum each text condition to the respective subgraph in the batch
-        text_condition_per_subgraph = text_condition[neutral_graph.batch]
-
-        x = self.gcn1(neutral_graph.x, neutral_graph.edge_index)
-        x = x + text_condition_per_subgraph
-        x = torch.relu(x)
-        x = self.gcn2(x, neutral_graph.edge_index)
-
-        return x
-
-    def common_step(self, batch):
-
-        neutral_graph = batch['neutral_graph']
-        target_graph = batch['expression_graph']
-        descriptions = batch['description']
-
-        displaced_vertices = self(neutral_graph, descriptions)
-
-        loss = self.loss_fn(
-            displaced_vertices,
-            target_graph.x,
-            vertices=neutral_graph.x,
-            edges=neutral_graph.edge_index,
-            batch=neutral_graph.batch
+        # Fusion module
+        self.fusion = nn.Sequential(
+            nn.Linear(self.latent_size * 2, self.latent_size),
+            nn.ReLU(),
+            nn.Linear(self.latent_size, self.latent_size)
         )
 
-        return displaced_vertices, loss
+        # Decoder layers with residual connections
+        self.gcn_decoder = nn.ModuleList([
+            GCNConv(self.latent_size, self.latent_size),
+            GCNConv(self.latent_size, self.latent_size)
+        ])
 
-    def compute_metrics(self, pred, batch):
-        computed_rendered_images = []
-        target_rendered_images = []
+        # Final projection to get vertex offsets
+        self.offset_proj = nn.Linear(self.latent_size, self.input_dim)
 
-        """
-        for idx in range(self.batch_size):
+        # Activation functions
+        self.activation = nn.LeakyReLU(0.2)
 
-            computed_mesh = tensor_to_mesh(vertices=pred[idx],
-                                            faces=batch['neutral_graph'][idx].faces,)
+        self.loss_fn = custom_loss
 
-            target_mesh = tensor_to_mesh(vertices=batch['expression_graph'][idx].x,
-                                          faces=batch['expression_graph'][idx].faces,)
+        self.save_hyperparameters()
 
-            # Render views
-            computed_rendered_images.append(self.renderer.render_viewpoints(
-                model_in=computed_mesh,
-                num_views=8,
-                radius=600,
-                elevation=0,
-                scale=1.0,
-                rend_size=(1024, 1024),
-                return_images=True
-            ))
-            target_rendered_images.append(self.renderer.render_viewpoints(
-                model_in=target_mesh,
-                num_views=8,
-                radius=600,
-                elevation=0,
-                scale=1.0,
-                rend_size=(1024, 1024),
-                return_images=True
-            ))
+    def forward(self, neutral_meshes, descriptions):
+        # Get packed representations
+        vertices = neutral_meshes.verts_packed()
+        edges = neutral_meshes.edges_packed().T
 
-            for computed, target in zip(computed_rendered_images, target_rendered_images):
+        # Encode mesh
+        x = vertices
+        for gcn in self.gcn_encoder:
+            x = self.activation(gcn(x, edges))
+        mesh_features = x
 
-                # Calculate metrics
-                mse_loss = nn.MSELoss()
-                mse = mse_loss(computed, target)
-            """
+        # Encode text
+        text_features = self.text_encoder(descriptions)
+        mesh_idx_per_vertex = neutral_meshes.verts_packed_to_mesh_idx()
+        text_features = text_features[mesh_idx_per_vertex]
 
+        # Fuse features
+        concat_features = torch.cat([mesh_features, text_features], dim=-1)
+        fused_features = self.fusion(concat_features)
+
+        # Decode with residual connections
+        x = fused_features
+        for gcn in self.gcn_decoder:
+            x_new = self.activation(gcn(x, edges))
+            x = x + x_new  # Residual connection
+
+        # Project to offset space
+        offsets = self.offset_proj(x)
+
+        return offsets
+
+    def common_step(self, batch):
+        neutral_meshes = batch['neutral_meshes'].to(self.device)
+        expression_meshes = batch['expression_meshes'].to(self.device)
+        descriptions = batch['descriptions']
+
+        displacements = self(neutral_meshes, descriptions)
+
+        predicted_meshes = neutral_meshes.offset_verts(displacements)  # returns new object
+
+        loss = self.loss_fn(
+            predicted_meshes,
+            expression_meshes,
+            w_chamfer=self.w_chamfer,
+            w_normal=self.w_normal,
+            w_laplacian=self.w_laplacian,
+            n_samples=self.n_samples
+        )
+
+        self.log("loss", loss.item(), batch_size=self.batch_size, prog_bar=True, logger=True)
+        self.log("disp_mean", torch.abs(displacements).mean().item(), batch_size=self.batch_size, prog_bar=True,
+                 logger=True)
+
+        return predicted_meshes, loss
+
+    def compute_metrics(self, pred, target, stage='train'):
+        chamfer = chamfer_distance(pred, target)
+        hausdorff = hausdorff_distance(pred, target)
+
+        self.log(f'{stage}_Chamfer', chamfer.item(), batch_size=self.batch_size, prog_bar=True, logger=True)
+        self.log(f'{stage}_Hausdorff', hausdorff.item(), batch_size=self.batch_size, prog_bar=True, logger=True)
+
+    def inference(self, neutral_meshes, descriptions):
+        displacements = self(neutral_meshes, descriptions)
+        expression_meshes = neutral_meshes.offset_verts(displacements)
+        return expression_meshes
 
     def training_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.compute_metrics(pred, batch)
-        self.log("train_loss",
-                 loss,
-                 prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+        self.compute_metrics(pred, batch['expression_meshes'], stage='train')
+        self.log("train_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.compute_metrics(pred, batch)
-        self.log("val_loss",
-                 loss,
-                 prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+        self.compute_metrics(pred, batch['expression_meshes'], stage='validation')
+        self.log("val_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         pred, loss = self.common_step(batch)
-        self.log("test_loss",
-                 loss,
-                 prog_bar=True,
-                 logger=True,
-                 batch_size=self.batch_size)
+        self.log("test_loss", loss, batch_size=self.batch_size, prog_bar=True, logger=True)
         return loss
 
     def configure_optimizers(self):

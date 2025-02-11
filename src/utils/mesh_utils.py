@@ -1,36 +1,33 @@
-from torch_geometric.data import Data
 from pathlib import Path
+from pytorch3d.io import load_obj
+from pytorch3d.structures import Meshes
+import torch.nn.functional as F
 import pyvista as pv
 import numpy as np
 import trimesh
 import torch
 
+from src.utils.meshes import WeightedMeshes
+
 
 def read_mesh(
         obj_path,
-        loader='trimesh',
-        mesh_drop_percent=None,
-        mesh_face_count=None,
-        aggression=None,
-        normalize=False
+        normalize=False,
 ):
     """
-    Reads a mesh file and returns its processed data.
+    Reads a mesh file using either PyTorch3D or trimesh loaders.
 
-    Args:
-        obj_path (str or Path): Path to the mesh file
-        loader (str): Mesh loader to use (for now, only 'trimesh' is supported)
-        mesh_drop_percent (float): Percentage of faces to drop (between 0.0 and 1.0)
-        mesh_face_count (int, optional): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
-        aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
+    Parameters:
+        obj_path (str or Path): Path to the mesh file.
+        normalize (bool): Whether to normalize vertex coordinates.
 
     Returns:
-        dict: Dictionary containing mesh data (vertices, faces, normals)
+        PyTorch3D Meshes object
 
     Raises:
-        NotImplementedError: If loader not present
-        ValueError: If file extension is not supported or invalid parameters
+        ValueError: If file extension not supported or invalid parameters
     """
+
     if isinstance(obj_path, str):
         obj_path = Path(obj_path)
 
@@ -38,164 +35,115 @@ def read_mesh(
     if obj_path.suffix not in ['.obj', '.off', '.ply']:
         raise ValueError(f"Unsupported file extension for {obj_path}.")
 
-    match loader:
-        case 'trimesh':
-            # Load the mesh using trimesh
-            mesh = trimesh.load_mesh(obj_path, process=True)
+    verts_data = []
+    faces_data = []
+    weights_data = []
 
-            # Simplify the mesh if mesh_drop_percent or mesh_face_count are provided
-            if mesh_drop_percent or mesh_face_count:
+    with open(obj_path, 'r') as obj_file:
+        for line in obj_file:
+            parts = line.strip().split()
+            if not parts:
+                continue
 
-                # Validate mesh_face_count
-                if mesh_face_count is not None:
-                    if mesh_face_count < 4:
-                        raise ValueError(f"Target face count ({mesh_face_count}) too low. We can have a minimum of 4 faces for the mesh to be watertight.")
-                    if mesh_face_count > len(mesh.faces):
-                        raise ValueError(f"Target face count ({mesh_face_count}) exceeds original mesh face count ({len(mesh.faces)}).")
+            if parts[0] == 'v':  # Vertex line
+                verts_data.append([float(coord) for coord in parts[1:4]])
+            elif parts[0] == 'f':  # Face line
+                # Split face into indices, considering only the first index if multiple formats are used (e.g., v/vt/vn).
+                face = [int(part.split('/')[0]) - 1 for part in parts[1:4]]  # Convert to 0-based index.
+                faces_data.append(face)
+            elif parts[0] == 'w':  # Weights
+                weights_data.append(float(parts[1]))
 
-                # Validate percentage if mesh_face_count is not provided
-                else:
-                    if mesh_drop_percent and not 0 < mesh_drop_percent <= 1:
-                        raise ValueError("percent must be between 0.0 and 1.0")
+    verts = torch.tensor(verts_data, dtype=torch.float32)
+    faces = torch.tensor(faces_data, dtype=torch.long)
 
-                if aggression and not 0 <= aggression <= 10:
-                    raise ValueError("The aggression parameter must be an integer in range [0, 10]")
+    if len(weights_data) == 0:  # No weights in obj file
+        weights_data = [1] * len(verts)
+    weights = torch.tensor(weights_data, dtype=torch.float32)
 
-                mesh = mesh.simplify_quadric_decimation(
-                    percent=mesh_drop_percent,
-                    face_count=mesh_face_count,
-                    aggression=aggression
-                )
+    # Normalize if requested
+    if normalize:
+        center = verts.mean(0)
+        scale = max((verts - center).abs().max(0)[0])
+        verts = (verts - center) / scale
 
-                if normalize:
-                    mesh.vertices = mesh.vertices / mesh.vertices.max()
-
-
-        case _:
-            raise NotImplementedError(f"Loader '{loader}' is not implemented. Only 'trimesh' is currently supported.")
+    # Create Meshes object
+    mesh = WeightedMeshes(
+        verts=[verts],
+        faces=[faces],
+        weights=[weights]
+    )
 
     return mesh
 
-
-def read_graph(obj_path, **kwargs):
+def read_meshes(meshes, normalize=False):
     """
-    Reads the mesh file and returns a torch_geometric.data.Data graph.
+    Batch a list of mesh node features into a single pytorch3d.Meshes object.
 
-    Args:
-        obj_path (str or pathlib.Path): Path to the mesh.
+    Parameters:
+        meshes (list[str | Path]): List of paths to meshes.
+        normalize (bool): True to normalize the meshes, False otherwise.
 
     Returns:
-        torch_geometric.data.Data: Graph generated from the mesh at obj_path.
+        pytorch3d.Meshes: pytorch3d's Meshes object containing all the meshes (eventually normalized).
     """
 
-    mesh = read_mesh(obj_path, **kwargs)
+    all_verts = []
+    all_faces = []
+    all_weights = []
 
-    vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
-    faces = torch.tensor(mesh.faces, dtype=torch.long)
+    for obj_path in meshes:
 
-    # Convert faces to edges
-    edge_list = faces_to_edges(faces.numpy(force=True))
-    edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+        verts_data = []
+        faces_data = []
+        weights_data = []
 
-    # Create graph object
-    graph = Data(
-        x=vertices,  # Nodes (vertex features)
-        edge_index=edge_index,  # Edges
-        faces=faces
-    )
-    return graph
+        with open(obj_path, 'r') as obj_file:
+            for line in obj_file:
+                parts = line.strip().split()
+                if not parts:
+                    continue
 
+                if parts[0] == 'v':  # Vertex line
+                    verts_data.append([float(coord) for coord in parts[1:4]])
+                elif parts[0] == 'f':  # Face line
+                    # Split face into indices, considering only the first index if multiple formats are used (e.g., v/vt/vn).
+                    face = [int(part.split('/')[0]) - 1 for part in parts[1:4]]  # Convert to 0-based index.
+                    faces_data.append(face)
+                elif parts[0] == 'w':  # Weights
+                    weights_data.append(float(parts[1]))
 
-def read_dict(obj_path, **kwargs):
-    """
-    Reads the mesh file and returns a dictionary containing its data.
+        verts = torch.tensor(verts_data, dtype=torch.float32)
+        faces = torch.tensor(faces_data, dtype=torch.long)
 
-    Args:
-        obj_path (str or pathlib.Path): Path to the mesh.
+        if len(weights_data) == 0:  # No weights in obj file
+            weights_data = [1] * len(verts)
+        weights = torch.tensor(weights_data, dtype=torch.float32)
 
-    Returns:
-        dict: Dictionary generated from the mesh at obj_path.
-    """
+        # Normalize if requested
+        if normalize:
+            center = verts.mean(0)
+            scale = max((verts - center).abs().max(0)[0])
+            verts = (verts - center) / scale
 
-    mesh = read_mesh(obj_path, **kwargs)
+        all_verts.append(verts)
+        all_faces.append(faces)
+        all_weights.append(weights)
 
-    vertices = torch.tensor(mesh.vertices, dtype=torch.float32)
-    faces = torch.tensor(mesh.faces, dtype=torch.long)
+    # Create a Meshes object
+    meshes = WeightedMeshes(verts=all_verts, faces=all_faces, weights=all_weights)
 
-    # Generate normals if available
-    vertex_normals = (torch.tensor(mesh.vertex_normals, dtype=torch.float32)
-                      if mesh.vertex_normals is not None else None)
-    face_normals = None
-
-    return {
-        "vertices": vertices,
-        "faces": faces,
-        "vertex_normals": vertex_normals,
-        "face_normals": face_normals
-    }
-
-
-def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_normals=False):
-    """
-    Visualizes the mesh and its normals using common data from read_mesh.
-    """
-
-    # Extract vertices and faces
-    if isinstance(mesh, dict):
-        vertices = mesh["vertices"].numpy(force=True)
-        faces = mesh["faces"].numpy(force=True).flatten()
-
-        # Check if vertex normals are available
-        vertex_normals = (mesh["vertex_normals"].numpy(force=True)
-                          if mesh["vertex_normals"] is not None else None)
-
-    elif isinstance(mesh, Data):
-        vertices = mesh.x
-        faces = mesh.faces
-
-        # Generate normals if available
-        vertex_normals = None
-
-    else:
-        vertices = mesh.vertices
-        faces = mesh.faces
-
-        # Generate normals if available
-        vertex_normals = mesh.vertex_normals if mesh.vertex_normals is not None else None
-
-    # Convert faces to PyVista format (prefix each face with the number of vertices, 3 for triangles)
-    pv_faces = np.insert(faces.reshape(-1, 3), 0, 3, axis=1)  # PyVista expects this format
-    mesh = pv.PolyData(vertices, pv_faces)
-
-    # Add normals if available
-    if show_normals and vertex_normals is not None:
-        mesh["Normals"] = vertex_normals
-
-    # Add uniform color to all vertices
-    uniform_color = np.tile(color, (vertices.shape[0], 1))
-    mesh.point_data["Color"] = uniform_color
-
-    # Plot the mesh
-    plotter = pv.Plotter()
-    plotter.add_mesh(mesh, scalars="Color", rgb=True, show_edges=False)
-
-    # Optionally add normals
-    if show_normals and vertex_normals is not None:
-        plotter.add_arrows(vertices, vertex_normals, mag=0.1, color="white", label="Normals")
-
-    # Add axes for reference
-    plotter.add_axes()
-    plotter.show()
+    return meshes
 
 
 def tensor_to_mesh(vertices, faces, vertex_normals=None):
     """
     Creates a trimesh object from tensor data.
 
-    Args:
-        vertices (torch.Tensor): Vertex positions tensor of shape (N, 3)
-        faces (torch.Tensor): Face indices tensor of shape (M, 3)
-        vertex_normals (torch.Tensor, optional): Vertex normals tensor of shape (N, 3)
+    Parameters:
+        vertices (torch.Tensor): Vertex positions tensor of shape (N, 3).
+        faces (torch.Tensor): Face indices tensor of shape (M, 3).
+        vertex_normals (torch.Tensor, optional): Vertex normals tensor of shape (N, 3).
 
     Returns:
         trimesh.Trimesh: The created mesh object
@@ -219,40 +167,179 @@ def tensor_to_mesh(vertices, faces, vertex_normals=None):
     return mesh
 
 
+def pad_mesh(tensor, target_size):
+    """
+    Pad a tensor to the desired size.
+    """
+    pad_size = target_size - tensor.size(0)
+    return F.pad(tensor, (0, 0, 0, pad_size))
+
+
+def unpack_meshes(pack, batch_indices):
+    unique_indices = batch_indices.unique()
+    return torch.stack([pack[batch_indices == idx] for idx in unique_indices])
+
+
+def pack_meshes(batch):
+    """
+    Convert (num_meshes, max_num_nodes, num_features) a batch to a pack (num_meshes*max_num_nodes, num_features).
+    It returns both the pack and the batch indices. The input meshes in the batch are supposed to be padded,
+    otherwise the conversion will fail.
+    """
+
+    # Create an indexing tensor
+    batch_indices = torch.cat([torch.full((batch[i].size(0),), i, dtype=torch.long) for i in range(len(batch))])
+
+    # Concatenate the meshes into a single tensor
+    pack = torch.cat(batch, dim=0)
+
+    return pack, batch_indices
+
+
 def faces_to_edges(faces):
     """
-    Given the faces of a mesh, create the unique edges.
+    Converts a tensor containing face indices to a tensor containing edge indices.
 
-    Args:
-        faces (list of list or tuple, tensor): A list of faces, where each face is
-            represented as a list or tuple of vertex indices (e.g., [v1, v2, v3]).
+    Parameters:
+        faces (torch.Tensor): Tensor containing face indices.
 
     Returns:
-        list of tuple: A list of unique edges, where each edge is a tuple of two
-            vertex indices (e.g., (v1, v2)). The vertex indices in each edge are
-            sorted in ascending order.
+        torch.Tensor: Tensor containing edges indices.
     """
-    edges = set()
-    for face in faces:
-        edges.add(tuple(sorted([face[0], face[1]])))
-        edges.add(tuple(sorted([face[1], face[2]])))
-        edges.add(tuple(sorted([face[2], face[0]])))
-    return list(edges)
 
+    # Convert faces to edges (undirected edges)
+    edges = torch.cat([
+        faces[:, [0, 1]],  # Edge between vertex 0 and 1
+        faces[:, [1, 2]],  # Edge between vertex 1 and 2
+        faces[:, [2, 0]]  # Edge between vertex 2 and 0
+    ], dim=0)
 
-def iterate_batch(batch):
+    # Remove duplicate edges (if graph is undirected)
+    edges = torch.cat([edges, edges[:, [1, 0]]], dim=0)  # Add reverse edges for undirected graph
+    edges = torch.unique(edges, dim=0)  # Remove duplicates
 
-    for idx in range(batch.num_graphs):
-        yield tensor_to_mesh(vertices=batch[idx].x,
-                                       faces=batch[idx].faces)
+    # Transpose edges to match PyTorch Geometric format
+    edge_index = edges.t()  # Shape: [2, num_edges]
+
+    return edge_index
+
+def visualize_mesh(mesh, color=(0.0, 0.0, 1.0), show_edges=False):
+    """
+    Visualizes a 3D mesh using PyVista.
+
+    Parameters:
+        mesh (dict, tuple(torch.Tensor, torch.Tensor), pytorch3d.Meshes, trimesh.Trimesh):
+            The input mesh to visualize. Can be one of the following:
+            - A dictionary with keys "vertices" (Nx3 tensor/array) and "faces" (Fx3 tensor/array).
+            - Two tensors containing vertex positions (Nx3) and a corresponding faces tensor (Fx3).
+            - A PyTorch3D Meshes object (must contain exactly one mesh).
+            - A Trimesh object.
+        color (tuple(floats), torch.Tensor, np.nd.array): RGB color to apply to the mesh.
+            If a tuple is provided, the same color will be applied to all the vertices.
+            If a tensor or an array are provided, the number of colors must match the number of
+            vertices and each color will be applied to the respective vertex.
+        show_edges (bool): Whether to show the edges of the mesh. Default is False.
+    """
+
+    # Handle different mesh input types
+    if isinstance(mesh, dict):
+        vertices = mesh["vertices"]
+        faces = mesh["faces"]
+
+        if isinstance(vertices, torch.Tensor):
+            vertices = vertices.cpu().detach().numpy()
+        if isinstance(faces, torch.Tensor):
+            faces = faces.cpu().detach().numpy()
+
+    elif isinstance(mesh, WeightedMeshes):
+        if mesh.verts_padded().shape[0] != 1:
+            raise ValueError("PyTorch3D Meshes object must contain exactly one mesh.")
+
+        vertices = mesh.verts_packed().cpu().detach().numpy()
+        faces = mesh.faces_packed().cpu().detach().numpy()
+        weights = mesh.weights_packed().cpu().detach().numpy()
+
+        # Create the color by repeating the weights (bw).
+        # This overrides the color provided from outside.
+        color = np.tile(weights[:, np.newaxis], (1, 3))
+
+    elif isinstance(mesh, Meshes):
+        if mesh.verts_padded().shape[0] != 1:
+            raise ValueError("PyTorch3D Meshes object must contain exactly one mesh.")
+
+        vertices = mesh.verts_packed().cpu().detach().numpy()
+        faces = mesh.faces_packed().detach().cpu().numpy()
+
+    elif isinstance(mesh, trimesh.Trimesh):
+        vertices = mesh.vertices
+        faces = mesh.faces
+
+    elif isinstance(mesh, tuple) and len(mesh) == 2:
+        vertices, faces = mesh
+        if isinstance(vertices, torch.Tensor):
+            vertices = vertices.cpu().detach().numpy()
+        if isinstance(faces, torch.Tensor):
+            faces = faces.cpu().detach().numpy()
+
+    else:
+        raise TypeError("Unsupported mesh type. Must be dict, tuple, PyTorch3D Meshes, or trimesh.Trimesh.")
+
+    # Convert faces to PyVista format
+    pv_faces = np.insert(faces, 0, 3, axis=1).flatten()
+    pv_mesh = pv.PolyData(vertices, pv_faces)
+    num_vertices = vertices.shape[0]
+
+    # Handle vertex colors: use provided colors or fallback to default
+    if isinstance(color, tuple):
+        if len(color) != 3:
+            raise ValueError("Color tuple must contain 3 values (RGB).")
+        vertex_colors = np.tile(color, (vertices.shape[0], 1))
+
+    elif isinstance(color, np.ndarray):
+        if color.shape != (num_vertices, 3):
+            raise ValueError(f"Color array must have shape ({num_vertices}, 3), has shape {color.shape} instead.")
+        vertex_colors = color
+
+    elif isinstance(color, torch.Tensor):
+        if (color.shape[0], color.shape[1]) != (num_vertices, 3):
+            raise ValueError(f"Color tensor must have shape ({num_vertices}, 3), has shape {color.shape} instead.")
+        vertex_colors = color.cpu().numpy()
+
+    else:
+        raise ValueError("Unsupported color type. Must be tuple, np.ndarray, torch.Tensor.")
+
+    pv_mesh.point_data["Color"] = vertex_colors
+
+    # Plot the mesh
+    plotter = pv.Plotter()
+    plotter.add_mesh(pv_mesh, scalars="Color", rgb=True, show_edges=show_edges)
+
+    # Add axes for reference
+    plotter.add_axes()
+    plotter.show()
 
 
 # Test the visualization
 if __name__ == "__main__":
 
     root_dir = Path(__file__).parent.parent.parent
-    mesh_path = Path(root_dir, 'datasets/facescape/100/models_reg/1_neutral.obj')
+    mesh_path = Path(root_dir, 'datasets/facescape_highlighted/100/models_reg/1_neutral.obj')
 
+    # Simple visualization with a Meshes object
+    """
     color = torch.tensor([0.0, 0.0, 1.0])
-    mesh_data = read_dict(mesh_path)
-    visualize_mesh(mesh_data, color=color)
+    mesh = load_objs_as_meshes([mesh_path])
+    visualize_mesh(mesh)
+    """
+
+    # Load a mesh with vertex colors
+    vertices, faces, aux = load_obj(mesh_path)
+
+    # Try to use the normals for the color
+    if aux.normals is not None:
+        color = aux.normals
+    else:
+        color = (0.0, 0.0, 0.1)  # Fallback to blue
+
+    # Visualize the mesh
+    visualize_mesh((vertices, faces.verts_idx), color=color)

@@ -20,7 +20,7 @@ def strip(s):
     return s.strip()
 
 def wrap(s):
-    return f"A human face with {s} expression"
+    return f"A {s} expression"
 
 # Predefined text generations
 # DEFAULT_TEXT_GENERATION = compose(replace_underscores, remove_numbers, remove_extension, strip, wrap)

@@ -1,8 +1,8 @@
 import argparse
 from pathlib import Path
-import torch
 
-from src.utils.mesh_utils import read_dict, visualize_mesh
+from src.utils.mesh_utils import visualize_mesh
+from src.utils.mesh_utils import read_meshes
 
 
 if __name__ == "__main__":
@@ -15,37 +15,18 @@ if __name__ == "__main__":
     # Argument parser setup
     parser = argparse.ArgumentParser(description="Visualize mesh before and after simplification.")
     parser.add_argument('-m', '--mesh', type=str, required=True, help="Path to the mesh file (.obj).")
-    parser.add_argument('-p', '--percent', type=float, default=0.8, help="Percentage to simplify the mesh (default: 0.8).")
-    parser.add_argument('-f', '--face-count', type=int, default=None, help="Face count (overrides the percentage).")
-    parser.add_argument('-a', '--aggression', type=int, default=5, help="Aggression in the simplification (default: 0.5).")
-    parser.add_argument('-n', '--normalize', type=bool, default=True,
-                        help="Normalize mesh between -1 and 1.")
+    parser.add_argument('-n', '--normalize', type=bool, default=True, help="Normalize mesh between -1 and 1.")
 
     args = parser.parse_args()
-
-    # Default color for the mesh (blue)
-    color = torch.tensor([0.0, 0.0, 1.0])
 
     # Resolve mesh path
     mesh_path = Path(args.mesh)
 
-    # Read and display the original mesh
-    mesh_data = read_dict(mesh_path)
+    # Read the mesh
+    mesh = read_meshes([mesh_path])
     print(f"Original mesh:")
-    print(f"Vertices: {len(mesh_data['vertices'])}")
-    print(f"Faces: {len(mesh_data['faces'])}")
-
-    # Simplify and display the mesh
-    mesh_data = read_dict(
-        mesh_path,
-        mesh_drop_percent=args.percent,
-        mesh_face_count=args.face_count,
-        aggression=args.aggression,
-        normalize=args.normalize
-    )
-    print(f"\nSimplified mesh:")
-    print(f"Vertices: {len(mesh_data['vertices'])}")
-    print(f"Faces: {len(mesh_data['faces'])}")
+    print(f"Vertices: {mesh.verts_padded().shape}")
+    print(f"Faces: {mesh.faces_padded().shape}")
 
     # Visualize the mesh
-    visualize_mesh(mesh_data, color=color)
+    visualize_mesh(mesh)

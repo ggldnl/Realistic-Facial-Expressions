@@ -1,177 +1,123 @@
 from pathlib import Path
-import pytorch_lightning as pl
 from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 from torch.utils.data import random_split
-from torch_geometric.data import Data
-from torch_geometric.data import Batch
-from torch_geometric.loader import DataLoader
-import torch
+import pytorch_lightning as pl
 
-
-from src.utils.mesh_utils import faces_to_edges
-from src.utils.mesh_utils import read_dict
+from src.utils.mesh_utils import read_meshes
 from src.utils.file_utils import download_resource
 from src.utils.file_utils import download_google_drive
 from src.utils.file_utils import extract_zip
 from src.utils.file_utils import remove
 
 
+def collate_meshes(batch):
+    """Custom collate function for batching meshes together."""
+
+    # Extract paths from each mesh
+    neutral_paths = [item["neutral_path"] for item in batch]
+    expression_paths = [item["expression_path"] for item in batch]
+    descriptions = [item["description"] for item in batch]
+
+    neutral_batch = read_meshes(neutral_paths, normalize=False)
+    expression_batch = read_meshes(expression_paths, normalize=False)
+
+    # We use pytorch3d Meshes objects that provide methods to
+    # 1. get a packed representation (used by the graph convolutional layers)
+    # 2. get a batched representation (used by the loss)
+    # 3. efficiently sum the displacements produced by the gnn (to get a predicted mesh)
+    return {
+        "neutral_meshes": neutral_batch,
+        "expression_meshes": expression_batch,
+        "descriptions": descriptions
+    }
+
+
 class FacescapeDataset(Dataset):
     """
     A PyTorch Dataset class for handling Facescape data.
-
-    Args:
-        data (list): The dataset.
-        mesh_drop_percent (float): Percentage of faces to drop (between 0.0 and 1.0), used if face_count is None
-        mesh_face_count (int, optional): Target number of faces in simplified mesh, overrides percent if provided
-        aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
     """
 
-    def __init__(self, data, mesh_drop_percent=0.5, mesh_face_count=None, aggression=None):
-        super(FacescapeDataset, self).__init__()
+    def __init__(
+            self,
+            data: list
+    ):
         self.data = data
-        self.mesh_drop_percent = mesh_drop_percent
-        self.mesh_face_count = mesh_face_count
-        self.aggression = aggression
 
     def __len__(self):
         """
         Returns the number of items in the dataset.
-
-        Returns:
-            int: The length of the dataset.
         """
         return len(self.data)
 
-    def __getitem__(self, item):
+    def __getitem__(self, idx):
         """
         Retrieves an item from the dataset.
 
         Args:
-            item (int): The index of the desired item.
+            idx (int): The index of the desired item.
 
         Returns:
             dict: A dictionary containing the item data.
         """
-        neutral_mesh_dict = read_dict(
-            self.data[item]['neutral'],
-            mesh_drop_percent=self.mesh_drop_percent,
-            mesh_face_count=self.mesh_face_count,
-            aggression=self.aggression
-        )
-        expression_mesh_dict = read_dict(
-            self.data[item]['expression'],
-            mesh_drop_percent=self.mesh_drop_percent,
-            mesh_face_count=self.mesh_face_count,
-            aggression=self.aggression
-        )
-
-        neutral_vertices = neutral_mesh_dict['vertices']
-        neutral_faces = neutral_mesh_dict['faces']
-        expression_vertices = expression_mesh_dict['vertices']
-        expression_faces = expression_mesh_dict['faces']
-
-        # Convert the mesh to graph: vertices as nodes, edges from faces
-        neutral_edges = faces_to_edges(neutral_faces)
-        expression_edges = faces_to_edges(expression_faces)
-
-        # Create graph objects
-        neutral_graph = Data(
-            x=neutral_vertices.clone().detach(),  # Vertices
-            edge_index=torch.tensor(neutral_edges, dtype=torch.long).t(),  # Edges
-            faces=neutral_faces.clone().detach()  # Faces
-        )
-
-        expression_graph = Data(
-            x=expression_vertices.clone().detach(),
-            edge_index=torch.tensor(expression_edges, dtype=torch.long).t(),
-            faces=expression_faces.clone().detach()
-        )
-
-        return {
-            'neutral_graph': neutral_graph,
-            'expression_graph': expression_graph,
-            'description': self.data[item]['description']
-        }
+        return self.data[idx]
 
 
 class FacescapeDataModule(pl.LightningDataModule):
-    """
-    A LightningDataModule for handling data loading, downloading, and preprocessing of the
-    Facescape dataset.
+    """PyTorch Lightning data module for 3D face mesh data."""
 
-    Args:
-        resource_url (str): URL for downloading the dataset.
-        download_source (str): Type of download source ('drive' or 'url').
-        data_dir (Path): Directory where the data will be stored.
-        download (str): Behavior for downloading ('infer', 'yes', or 'no').
-        batch_size (int): Batch size for DataLoaders.
-        num_workers (int): Number of workers for DataLoaders.
-        train_split (float): Proportion of data for training.
-        val_split (float): Proportion of data for validation.
-        mesh_drop_percent (float, optional): Percentage of faces to drop (between 0.0 and 1.0)
-        mesh_face_count (int, optional): Target number of faces in simplified mesh, overrides mesh_drop_percent if provided
-        aggression (int): Simplification aggressiveness, 0 (slow/quality) to 10 (fast/rough)
-    """
-    def __init__(self,
-                 resource_url,          # URL that identifies where to download the data from
-                 download_source,       # The URL can point to google drive, author's website and so on
-                 data_dir,              # Where to put the downloaded data
-                 download='infer',      # Download, skip or check if all the files are there before downloading
-                 text_generation=None,  # Lambda used to generate a text description given a file name
-                 batch_size=64,
-                 num_workers=4,
-                 train_split=0.8,
-                 val_split=0.1,
-                 mesh_drop_percent=0.5,
-                 mesh_face_count=None,
-                 aggression=None
-                 ):
-
+    def __init__(
+            self,
+            resource_url: str,
+            download_source: str,
+            data_dir: Path,
+            download: str = 'infer',
+            text_generation=None,
+            batch_size: int = 32,
+            num_workers: int = 4,
+            train_split: float = 0.8,
+            val_split: float = 0.1,
+            normalize: bool = False,
+            first_subject: int = 1,
+            last_subject: int = 100,
+            custom_collate=collate_meshes
+    ):
+        """
+        Args:
+            resource_url: URL for downloading the dataset
+            download_source: Type of download source ('drive' or 'url')
+            data_dir: Directory where the data will be stored
+            download: Download behavior ('infer', 'yes', or 'no')
+            text_generation: Function to generate descriptions from filenames
+            batch_size: Batch size for dataloaders
+            num_workers: Number of CPU workers for data loading
+            train_split: Fraction of data for training
+            val_split: Fraction of data for validation
+            normalize: Whether to normalize vertex coordinates
+        """
         super().__init__()
-
-        # Data downloading
         self.resource_url = resource_url
         self.download_source = download_source
         self.data_dir = data_dir
         self.download = download
 
-        # Mesh simplification parameters
-        self.mesh_drop_percent = mesh_drop_percent
-        self.mesh_face_count = mesh_face_count
-        self.aggression = aggression
-
         if text_generation is None:
             text_generation = lambda s: ''.join(c if not c.isdigit() else '' for c in s.replace('_', ' '))
 
         self.text_generation = text_generation
-
-        # TODO for now, only one user is taken into account
-        self.required_files = [
-            Path(self.data_dir, f'{i}', 'models_reg') for i in [100]
-        ]
-
-        # By using this custom collate a batch will have the form:
-        # (neutral_batch, expression_batch, descriptions)
-        # where neutral_batch and expression_batch are torch_geometric.data.Batch
-        # while descriptions is a list of strings
-        def custom_collate(batch):
-            neutral_graphs = [item['neutral_graph'] for item in batch]
-            expression_graphs = [item['expression_graph'] for item in batch]
-            descriptions = [item['description'] for item in batch]
-
-            batched_neutral = Batch.from_data_list(neutral_graphs)
-            batched_expression = Batch.from_data_list(expression_graphs)
-
-            return batched_neutral, batched_expression, descriptions
-
-        self.custom_collate = custom_collate
-
-        # Other stuff
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.train_split = train_split
         self.val_split = val_split
+        self.normalize = normalize
+        self.custom_collate = custom_collate
+
+        # Default required files structure
+        self.first_subject = first_subject
+        self.last_subject = last_subject
+        self.required_files = [
+            Path(self.data_dir, f'{i}', 'models_reg') for i in range(first_subject, last_subject + 1)
+        ]
 
         self.data = None
         self.train_dataset = None
@@ -193,7 +139,7 @@ class FacescapeDataModule(pl.LightningDataModule):
                 self.download = 'yes'
 
         if self.download == 'yes':
-            zip_path = Path(self.data_dir, 'datamodule.zip')
+            zip_path = Path(self.data_dir, 'data.zip')
             print('Downloading resource...')
 
             if self.download_source == 'drive':
@@ -201,11 +147,11 @@ class FacescapeDataModule(pl.LightningDataModule):
             elif self.download_source == 'url':
                 download_resource(self.resource_url, zip_path)
             else:
-                raise ValueError(f"Unsupported datamodule source: {self.download_source}")
-            print('Resource downloaded.\nExtracting resource...')
+                raise ValueError(f"Unsupported download source: {self.download_source}")
 
+            print('Resource downloaded. Extracting...')
             extract_zip(zip_path, self.data_dir)
-            print('Resource extracted.\nRemoving zip file...')
+            print('Resource extracted. Removing zip file...')
             remove(zip_path)
             print('Done.')
         else:
@@ -220,24 +166,24 @@ class FacescapeDataModule(pl.LightningDataModule):
 
             if user_path.is_dir():
                 # Find the path to the neutral mesh
-                neutral_mesh = None
+                neutral_path = None
                 for file in user_path.iterdir():
                     if "neutral" in file.stem and file.suffix == ".obj":
-                        neutral_mesh = Path(user_path, file)
+                        neutral_path = Path(user_path, file)
                         break
 
-                if not neutral_mesh:
+                if not neutral_path:
                     print(f"No neutral mesh found for user {user_folder}. Skipping...")
                     continue
 
                 # Process all other meshes
                 for file in user_path.iterdir():
-                    if file.suffix == ".obj" and file != neutral_mesh:
+                    if file.suffix == ".obj" and file != neutral_path:
                         description = self.text_generation(file.stem)
                         self.data.append(
                             {
-                                'neutral': neutral_mesh,
-                                'expression': file,
+                                'neutral_path': neutral_path,
+                                'expression_path': file,
                                 'description': description
                             }
                         )
@@ -257,9 +203,6 @@ class FacescapeDataModule(pl.LightningDataModule):
         # Create the dataset with simplification parameters
         full_dataset = FacescapeDataset(
             self.data,
-            mesh_drop_percent=self.mesh_drop_percent,
-            mesh_face_count=self.mesh_face_count,
-            aggression=self.aggression
         )
 
         # Compute the sizes for train, val, and test splits
@@ -285,7 +228,8 @@ class FacescapeDataModule(pl.LightningDataModule):
             self.train_dataset,
             batch_size=self.batch_size,
             collate_fn=self.custom_collate,
-            num_workers=self.num_workers
+            num_workers=self.num_workers,
+            shuffle=True
         )
 
     def val_dataloader(self):
@@ -322,26 +266,24 @@ if __name__ == '__main__':
     from src.models.gnn import config
     from src.data.text_generation import DEFAULT_TEXT_GENERATION
 
-    from src.utils.mesh_utils import visualize_mesh
-    from src.utils.mesh_utils import iterate_batch
-
     datamodule = FacescapeDataModule(
         resource_url=config.RESOURCE_URL,
         download_source=config.DOWNLOAD_SOURCE,
         data_dir=config.DATA_DIR,
+        batch_size=config.BATCH_SIZE,
         download=config.DOWNLOAD,
         text_generation=DEFAULT_TEXT_GENERATION,
-        mesh_drop_percent=config.MESH_DROP_PERCENTAGE
+        first_subject=config.FIRST_SUBJECT_INDEX,
+        last_subject=config.LAST_SUBJECT_INDEX
     )
 
     datamodule.prepare_data()
     datamodule.setup()
 
-    # Get a datamodule to iterate
-    train_loader = datamodule.train_dataloader()
-    print(f'\nNumber of batches in the train dataset: {len(train_loader)}')
+    train_dataloader = datamodule.train_dataloader()
 
-    for batch in train_loader:
+    iter_dataloader = iter(train_dataloader)
+    for batch in iter_dataloader:
 
         print(f'\nNumber of samples in the first batch: {len(list(batch.values())[0])}')
 
@@ -351,8 +293,5 @@ if __name__ == '__main__':
 
         print(f'\nIterating batch...')
         neutral_databatch = batch['neutral_graph']
-        for mesh in iterate_batch(neutral_databatch):
-            visualize_mesh(mesh)
-            break
 
         break

@@ -2,6 +2,8 @@ from pathlib import Path
 import numpy as np
 import pyvista
 import trimesh
+from pytorch3d.structures import Meshes
+from trimesh import Trimesh
 
 from src.utils.decorators import fixme
 
@@ -10,10 +12,6 @@ class Renderer:
 
     def __init__(self):
         pass
-
-    @staticmethod
-    def _load_mesh(model_in):
-        return trimesh.load(model_in, process=False)
 
     @staticmethod
     def extrinsic_to_pyvista(extrinsic_matrix):
@@ -150,13 +148,13 @@ class Renderer:
                scale=1.0,
                rend_size=(512, 512),
                return_as_image=False,
-               show_edges=True
-               ):
+               show_edges=True,
+               foreground_color="lightblue",
+               background_color="white",
+        ):
         """
-        Renders the mesh using PyVista. PyVista uses a camera model where the camera position, direction,
-        and up vector are specified directly, and it handles the intrinsic details internally, so the
-        intrinsic camera matrix is not used. You can specify the Rt matrix (intrinsic parameters) for the
-        camera position and direction
+        Renders the mesh using PyVista with options for foreground and background colors,
+        and optionally with a transparent background.
         """
 
         if Rt is not None and (cam_pos is not None or cam_view is not None or up_vector is not None):
@@ -164,16 +162,23 @@ class Renderer:
 
         if isinstance(model_in, str) or isinstance(model_in, Path):
             # Load the mesh using trimesh
-            mesh = self._load_mesh(model_in)
+            mesh = trimesh.load(model_in, process=False)
         else:
             mesh = model_in
 
-        # Each face must start with the number of vertices (3 for triangles)
-        faces = np.hstack([np.full((mesh.faces.shape[0], 1), 3), mesh.faces])  # Prefix faces with 3 (triangle)
-        faces = faces.astype(np.int64)
+        if isinstance(mesh, Trimesh):
+            faces = np.hstack([np.full((mesh.faces.shape[0], 1), 3), mesh.faces])  # Prefix faces with 3 (triangle)
+            faces = faces.astype(np.int64)
+            vertices = mesh.vertices
+        elif isinstance(mesh, Meshes):
+            faces = mesh.faces_list()[0].cpu().numpy().astype(np.int64)
+            faces = np.hstack([np.full((faces.shape[0], 1), 3), faces])  # Add a prefix with the number of nodes
+            vertices = mesh.verts_list()[0].cpu().numpy()
+        else:
+            raise ValueError(f'Unsupported type: {type(mesh)}')
 
         # Convert to PyVista mesh
-        pv_mesh = pyvista.PolyData(mesh.vertices, faces)
+        pv_mesh = pyvista.PolyData(vertices, faces)
 
         # Scale the mesh
         pv_mesh.scale([scale, scale, scale], inplace=True)
@@ -183,19 +188,22 @@ class Renderer:
 
         # Configure camera using Rt if provided
         if Rt is not None:
-            """
-            cam_pos = Rt[:3, 3]  # Camera position
-            cam_view = [0, 0, 0]  # Rt[:3, 3] - Rt[:3, 2]  # Look-at point (camera position minus z-axis)
-            up_vector = Rt[:3, 1]  # Up vector
-            """
             cam_pos, cam_view, up_vector = self.extrinsic_to_pyvista(Rt)
 
         if cam_pos is not None and cam_view is not None and up_vector is not None:
             plotter.camera_position = [cam_pos, cam_view, up_vector]
 
+        # Set the background color
+        transparent_background = False
+        if background_color == 'transparent':
+            transparent_background = True
+            background_color = 'white'  # PyVista does not natively support transparent backgrounds
+
+        plotter.set_background(background_color)
+
         # Add the mesh to the plotter
         plotter.clear()
-        plotter.add_mesh(pv_mesh, color="lightblue", show_edges=show_edges)
+        plotter.add_mesh(pv_mesh, color=foreground_color, show_edges=show_edges)
 
         # Render the scene and capture the image as a numpy array
         img = plotter.screenshot(return_img=True)
@@ -203,9 +211,27 @@ class Renderer:
         # Close the plotter to release resources
         plotter.close()
 
+        # Handle transparency
+        if transparent_background:
+            from PIL import Image
+
+            # Convert the image to RGBA and replace the background color with transparency
+            img = Image.fromarray(img).convert("RGBA")
+            data = np.array(img)
+            red, green, blue, alpha = data.T
+            # Replace background color (assumed white here) with transparency
+            white_areas = (red == 255) & (green == 255) & (blue == 255)
+            data[..., :-1][white_areas.T] = (0, 0, 0)  # Black for fully transparent areas
+            data[..., -1][white_areas.T] = 0  # Set alpha to 0
+            img = Image.fromarray(data)
+
+            if return_as_image:
+                return img
+
         if return_as_image:
             from PIL import Image
             return Image.fromarray(img)
+
         return img
 
 
@@ -227,7 +253,10 @@ if __name__ == "__main__":
     rendered_img = renderer.render(
         model_in=mesh_path,
         scale=1.0,
-        rend_size=(1024, 768)
+        rend_size=(1024, 768),
+        foreground_color='red',
+        background_color='transparent',
+        show_edges=True
     )
 
     # Display the rendered image using matplotlib
